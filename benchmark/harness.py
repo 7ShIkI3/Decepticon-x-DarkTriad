@@ -25,11 +25,43 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class AgentResponse:
-    """Structured response from a LangGraph agent invocation."""
+    """Structured response from a LangGraph agent invocation.
+
+    ``trace_id`` is the LangSmith trace identifier (== the LangGraph run id
+    returned from ``client.runs.create``). ``token_count`` is the sum of
+    ``usage_metadata.total_tokens`` across all AI messages in the final state;
+    ``None`` when no usage metadata was present (older message format).
+    """
 
     text: str
-    thread_id: str
+    trace_id: str | None = None
     token_count: int | None = None
+
+
+def _sum_token_usage(messages: object) -> int | None:
+    """Sum ``usage_metadata.total_tokens`` across AI messages.
+
+    Returns ``None`` when no AI message carried usage_metadata (so callers can
+    distinguish "0 tokens" from "we don't know"). Sub-agent token usage that
+    rolls up into the orchestrator state is included; usage that stays inside
+    a sub-graph is not visible here — observers should query LangSmith via
+    ``trace_id`` for the fully-aggregated number.
+    """
+    if not isinstance(messages, list):
+        return None
+    total = 0
+    found = False
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("type") != "ai":
+            continue
+        usage = msg.get("usage_metadata")
+        if not isinstance(usage, dict):
+            continue
+        tokens = usage.get("total_tokens")
+        if isinstance(tokens, int):
+            total += tokens
+            found = True
+    return total if found else None
 
 
 class Harness:
@@ -374,7 +406,7 @@ class Harness:
 
             result = self.provider.evaluate(challenge, state, workspace)
             result.duration_seconds = round(time.time() - start, 2)
-            result.thread_id = agent_resp.thread_id
+            result.trace_id = agent_resp.trace_id
             result.token_count = agent_resp.token_count
             result.agent_summary = agent_resp.text[:500] if agent_resp.text else None
             # Normal-success path: run reached terminal status via natural
@@ -554,11 +586,11 @@ class Harness:
                 # Run never created — no orphan to cancel; mark as observed
                 # so finally: skips the cancel/verify path.
                 terminal_observed = True
-                return AgentResponse(text="", thread_id=thread_id)
+                return AgentResponse(text="")
             except Exception as exc:
                 log.warning("Run submission failed for %s: %s", challenge.id, exc)
                 terminal_observed = True
-                return AgentResponse(text="", thread_id=thread_id)
+                return AgentResponse(text="")
 
             # Poll status until terminal. Avoid client.runs.join() because its
             # internal request_reconnect logic ignores asyncio.CancelledError,
@@ -625,14 +657,17 @@ class Harness:
                 )
             except Exception as exc:
                 log.warning("Run polling failed for %s: %s", challenge.id, exc)
-                return AgentResponse(text="", thread_id=thread_id)
+                return AgentResponse(text="", trace_id=run_id)
 
             # ThreadState looks like {"values": {...}, "next": [...], ...}.
             values: object = state_data.get("values") if isinstance(state_data, dict) else None
             if not isinstance(values, dict):
                 values = state_data if isinstance(state_data, dict) else {}
             text = self._extract_message(values)
-            return AgentResponse(text=text, thread_id=thread_id)
+            token_count = (
+                _sum_token_usage(values.get("messages")) if isinstance(values, dict) else None
+            )
+            return AgentResponse(text=text, trace_id=run_id, token_count=token_count)
         finally:
             # If we exit before the polling loop observed terminal status —
             # via raised exception, outer cancellation, or polling-exception

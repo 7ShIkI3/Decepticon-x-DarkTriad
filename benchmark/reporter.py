@@ -10,34 +10,44 @@ from benchmark.schemas import BenchmarkReport, ChallengeResult
 class Reporter:
     """Writes benchmark reports to disk in JSON and Markdown formats.
 
-    Layout per run:
-      - single challenge:  ``<results_dir>/<challenge_id>/report.{json,md}``
-                           + ``<results_dir>/<challenge_id>/evidence/summary.{json,md}``
-                           Re-runs OVERWRITE the per-challenge directory; history is
-                           preserved via the per-cycle git commit (atomic-commit-per-cycle
-                           gate in the self-improvement loop).
-      - multi-challenge batch: ``<results_dir>/batch-<UTC-timestamp>/...`` so concurrent
-                               batches don't clobber each other.
+    Layout per run (always the same shape, single or batch):
+
+      results/
+        <challenge_id>/                  ← one directory per challenge, persistent
+          <UTC_timestamp>.json           ← full ChallengeResult for THIS run
+          <UTC_timestamp>.md             ← human-readable evidence for THIS run
+          (one pair per execution; never overwrites)
+        batch-<UTC_timestamp>/           ← one directory per Reporter instance
+          report.json                    ← BenchmarkReport aggregate
+          report.md                      ← markdown table aggregate
+          index.json                     ← cross-reference of per-challenge paths
+
+    Re-running the same challenge id appends a new ``<UTC_timestamp>.{json,md}``
+    pair under ``results/<id>/``; the prior runs stay intact so the loop's
+    Observer can compare across cycles. The batch directory snapshots the
+    aggregate for the run that produced these files.
+
+    The timestamp is fixed at Reporter construction and shared across
+    write_json / write_markdown / write_evidence so all artifacts produced by
+    one run land under a single batch directory and pick up the same per-id
+    suffix.
     """
 
     def __init__(self, results_dir: Path) -> None:
         self.results_dir = results_dir
+        self._timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
-    def _is_single(self, report: BenchmarkReport) -> bool:
-        return len(report.results) == 1
+    @property
+    def _batch_dir(self) -> Path:
+        return self.results_dir / f"batch-{self._timestamp}"
 
-    def _run_dir(self, report: BenchmarkReport) -> Path:
-        """Return the per-run directory containing report + evidence."""
-        if self._is_single(report):
-            return self.results_dir / report.results[0].challenge_id
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        return self.results_dir / f"batch-{ts}"
+    def _challenge_dir(self, challenge_id: str) -> Path:
+        return self.results_dir / challenge_id
 
     def write_json(self, report: BenchmarkReport) -> Path:
-        """Write the report as a JSON file and return its path."""
-        out_dir = self._run_dir(report)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / "report.json"
+        """Write the batch aggregate JSON. Returns the path."""
+        self._batch_dir.mkdir(parents=True, exist_ok=True)
+        path = self._batch_dir / "report.json"
         path.write_text(
             json.dumps(report.model_dump(mode="json"), indent=2, default=str),
             encoding="utf-8",
@@ -45,10 +55,9 @@ class Reporter:
         return path
 
     def write_markdown(self, report: BenchmarkReport) -> Path:
-        """Write the report as a Markdown file and return its path."""
-        out_dir = self._run_dir(report)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        path = out_dir / "report.md"
+        """Write the batch aggregate Markdown. Returns the path."""
+        self._batch_dir.mkdir(parents=True, exist_ok=True)
+        path = self._batch_dir / "report.md"
 
         lines: list[str] = []
         lines.append(f"# Benchmark Report — {report.provider_name}")
@@ -100,26 +109,31 @@ class Reporter:
         return path
 
     def write_evidence(self, report: BenchmarkReport) -> Path:
-        """Write per-challenge solve evidence files for public reporting.
+        """Write per-challenge evidence files and the batch index.
 
-        Layout:
-          - single-challenge run: ``<run_dir>/evidence/summary.{json,md}`` (one rollup
-            because there is exactly one challenge in the run).
-          - batch run: ``<run_dir>/evidence/<challenge_id>.{json,md}`` per challenge
-            plus ``<run_dir>/evidence/index.json`` aggregating the batch.
+        Per-challenge files: ``results/<challenge_id>/<UTC_timestamp>.{json,md}``
+          - JSON: the full ChallengeResult model dump (preserves trace_id,
+            token_count, cancel_outcome, terminal_status_at_teardown — i.e.
+            everything the Observer needs to map a result to its LangSmith
+            trace and infrastructure outcome).
+          - MD: human-readable evidence card.
+
+        Batch index: ``results/batch-<UTC_timestamp>/index.json`` — provider
+        metadata plus a list of ``{id, name, level, passed, duration_seconds,
+        trace_id, evidence_path}`` so consumers can navigate from the batch
+        aggregate to each per-challenge file without scanning the directory.
+
+        Returns the batch directory path.
         """
-        evidence_dir = self._run_dir(report) / "evidence"
-        evidence_dir.mkdir(parents=True, exist_ok=True)
-
-        if self._is_single(report):
-            self._write_challenge_evidence(evidence_dir, report.results[0], stem="summary")
-            return evidence_dir
-
         for result in report.results:
-            self._write_challenge_evidence(evidence_dir, result, stem=result.challenge_id)
+            challenge_dir = self._challenge_dir(result.challenge_id)
+            challenge_dir.mkdir(parents=True, exist_ok=True)
+            self._write_challenge_evidence(challenge_dir, result, stem=self._timestamp)
 
+        self._batch_dir.mkdir(parents=True, exist_ok=True)
         index = {
             "provider": report.provider_name,
+            "timestamp": self._timestamp,
             "total": report.total,
             "passed": report.passed,
             "pass_rate": report.pass_rate,
@@ -130,34 +144,32 @@ class Reporter:
                     "level": r.level,
                     "passed": r.passed,
                     "duration_seconds": r.duration_seconds,
-                    "thread_id": r.thread_id,
+                    "trace_id": r.trace_id,
+                    "token_count": r.token_count,
+                    "evidence_path": str(
+                        self._challenge_dir(r.challenge_id) / f"{self._timestamp}.json"
+                    ),
                 }
                 for r in report.results
             ],
         }
-        (evidence_dir / "index.json").write_text(
+        (self._batch_dir / "index.json").write_text(
             json.dumps(index, indent=2, default=str), encoding="utf-8"
         )
-        return evidence_dir
+        return self._batch_dir
 
     def _write_challenge_evidence(
-        self, evidence_dir: Path, result: ChallengeResult, *, stem: str
+        self, challenge_dir: Path, result: ChallengeResult, *, stem: str
     ) -> None:
-        """Write JSON + Markdown evidence under <evidence_dir>/<stem>.{json,md}."""
-        evidence = {
-            "challenge_id": result.challenge_id,
-            "challenge_name": result.challenge_name,
-            "level": result.level,
-            "tags": result.tags,
-            "passed": result.passed,
-            "flag_captured": result.flag_captured,
-            "duration_seconds": result.duration_seconds,
-            "thread_id": result.thread_id,
-            "token_count": result.token_count,
-            "error": result.error,
-        }
-        (evidence_dir / f"{stem}.json").write_text(
-            json.dumps(evidence, indent=2, default=str), encoding="utf-8"
+        """Write JSON + Markdown for one challenge under ``<challenge_dir>/<stem>.{json,md}``.
+
+        The JSON dump is the FULL ChallengeResult (not a hand-picked subset)
+        so newly added fields surface automatically without reporter changes.
+        """
+        json_path = challenge_dir / f"{stem}.json"
+        json_path.write_text(
+            json.dumps(result.model_dump(mode="json"), indent=2, default=str),
+            encoding="utf-8",
         )
 
         lines = [
@@ -170,14 +182,19 @@ class Reporter:
         ]
         if result.flag_captured:
             lines.append(f"**Flag:** `{result.flag_captured}`")
-        if result.thread_id:
-            lines.append(f"**Thread ID:** `{result.thread_id}`")
-        if result.token_count:
+        if result.trace_id:
+            lines.append(f"**Trace ID:** `{result.trace_id}`")
+        if result.token_count is not None:
             lines.append(f"**Tokens:** {result.token_count:,}")
+        if result.cancel_outcome:
+            lines.append(f"**Cancel outcome:** {result.cancel_outcome}")
+        if result.terminal_status_at_teardown:
+            lines.append(f"**Terminal status at teardown:** {result.terminal_status_at_teardown}")
         if result.error:
             lines.append(f"**Error:** {result.error}")
         if result.agent_summary:
             lines.extend(["", "## Agent Summary", "", result.agent_summary])
         lines.append("")
 
-        (evidence_dir / f"{stem}.md").write_text("\n".join(lines), encoding="utf-8")
+        md_path = challenge_dir / f"{stem}.md"
+        md_path.write_text("\n".join(lines), encoding="utf-8")
