@@ -145,7 +145,7 @@ class SkillsMiddleware(BaseSkillsMiddleware):
     def __init__(self, *, backend: Any, sources: list[str]) -> None:
         super().__init__(backend=backend, sources=sources)
         self.system_prompt_template = DECEPTICON_SKILLS_PROMPT
-        self.tools = [_build_load_skill_tool(backend)]
+        self.tools = [_build_load_skill_tool(backend, self.sources)]
 
     # ── workflow.md auto-load ────────────────────────────────────────────────
 
@@ -388,7 +388,7 @@ def _list_dir_via_backend(backend: Any, dir_path: str) -> list[str]:
     return sorted(n for n in names if n.endswith(".md"))
 
 
-def _build_load_skill_tool(backend: Any):  # type: ignore[no-untyped-def]
+def _build_load_skill_tool(backend: Any, sources: list[str]):  # type: ignore[no-untyped-def]
     """Construct the ``load_skill`` LangChain tool.
 
     Returns a closure-bound ``@tool``-decorated function that reads a skill
@@ -433,6 +433,13 @@ def _build_load_skill_tool(backend: Any):  # type: ignore[no-untyped-def]
         # Reject path traversal — disallow ".." segments
         if ".." in skill_path.split("/"):
             return f"[load_skill error] Path traversal not allowed: {skill_path!r}"
+        # Enforce agent's skill source allowlist
+        if sources and not any(skill_path.startswith(src.rstrip("/")) for src in sources):
+            allowed = ", ".join(sources)
+            return (
+                f"[load_skill error] This agent may only load skills from: {allowed}. "
+                f"Got: {skill_path!r}"
+            )
 
         raw, err = _read_via_backend(backend, skill_path)
         if raw is None:

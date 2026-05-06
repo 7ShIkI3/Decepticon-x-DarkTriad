@@ -337,8 +337,8 @@ To determine "what's next", check for these artifacts:
 
 ## Agent → Skill Mapping
 
-| Agent | CLI Command | SkillsMiddleware Sources | Skills |
-|-------|-------------|--------------------------|--------|
+| Agent | CLI Command | Skill Sources | Skills |
+|-------|-------------|---------------|--------|
 | **Soundwave** | `/plan` | `/skills/soundwave/` | `roe-template`, `threat-profile`, `conops-template`, `opplan-converter` |
 | **Recon** | `/recon` | `/skills/recon/`, `/skills/shared/` | `passive-recon`, `osint`, `cloud-recon`, `active-recon`, `web-recon`, `reporting` + shared |
 | **Exploit** | `/exploit` | `/skills/exploit/`, `/skills/shared/` | `web`, `ad` + shared (`defense-evasion`, `opsec`, `workflow`) |

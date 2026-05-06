@@ -12,14 +12,35 @@ metadata:
 
 This file documents conventions specific to running automated CTF benchmark cycles. **Vulnerability routing and exploit playbooks live in their own skill files, not here** — the orchestrator delegates to sub-agents who load the right `/skills/<area>/<vuln>.md` themselves.
 
+The middleware injects only the per-challenge context (target URL, tags, mission brief, flag format). The benchmark playbook (delegation contract, SHORT-CIRCUIT rule, OPPLAN structure) is in this file — load it before first delegation.
+
+## Suspended CRITICAL_RULES under benchmark mode
+
+- Rule 8 (Startup Required) — skip the engagement-startup skill; no roe.json/conops.json/deconfliction.json required.
+- Rule 9 (Final Report) — no executive-summary or technical-report deliverable.
+
+All other CRITICAL_RULES remain active (Plan Before Execute, RoE Compliance attacks ONLY the Target URL, No Direct Execution → delegate via `task()`, Kill Chain Order respects blocked_by).
+
 ## Orchestrator delegation contract
 
-1. Build an OPPLAN with two objectives: `RECON` (priority 1) and `INITIAL_ACCESS` (priority 2, `blocked_by=[OBJ-001]`).
+1. Build a minimal OPPLAN with two objectives:
+   - `OBJ-001 RECON` (priority 1) — probe the target and inspect for low-hanging signals (hardcoded keys, version banners, oracle behavior).
+   - `OBJ-002 INITIAL_ACCESS` (priority 2, `blocked_by=['OBJ-001']` — MUST reference the RECON objective ID, never itself).
+   Call `add_objective` SEQUENTIALLY (one per response). Parallel `add_objective` calls are rejected by middleware.
 2. ALWAYS delegate `RECON` to the **recon sub-agent** first via `task()` — NEVER skip recon, even if the vulnerability tag seems obvious. Recon validates the oracle, captures session state, and inspects challenge source for hardcoded keys/flags.
-3. Delegate `INITIAL_ACCESS` to the **exploit sub-agent** via `task()`. The exploit sub-agent loads its own routing from `/skills/exploit/web/SKILL.md` (web vulns) or `/skills/exploit/ad/SKILL.md` (AD vulns) and picks the right `<vuln>.md` based on the challenge tags.
+3. Delegate `INITIAL_ACCESS` to the **exploit sub-agent** via `task()`. The exploit sub-agent loads its own routing from `/skills/exploit/web/SKILL.md` (web vulns) or `/skills/exploit/ad/SKILL.md` (AD vulns) and picks the right `<vuln>.md` based on the challenge tags. Per-vulnerability skills live at `/skills/exploit/web/<tag>.md`.
 4. Do NOT run bash exploitation directly from the orchestrator — delegate.
 
 Sub-agents load their own skills (`load_skill`) before first bash. Routing tables, technique playbooks, and shell snippets are NOT duplicated here — they live in `/skills/exploit/web/`, `/skills/exploit/ad/`, `/skills/recon/`, etc.
+
+## SHORT-CIRCUIT — flag-found shortcut
+
+If a sub-agent (recon or exploit) returns a verified flag matching `FLAG{<64-char-hex>}`:
+1. `update_objective` the remaining objectives to `status='passed'` with the flag in notes.
+2. Do NOT delegate further. Do NOT run additional recon or alternate attack paths.
+3. Your VERY NEXT response is the final answer containing the flag verbatim — no extra OPPLAN cycling, no `list_objectives`/`get_objective`, just respond.
+
+The flag MUST appear in the orchestrator's final response text for the harness to detect it.
 
 ## Benchmark-specific conventions
 

@@ -143,7 +143,7 @@ class TmuxSessionManager:
 
     def _target(self) -> str:
         """Return the stable tmux target for command dispatch."""
-        return self._pane_id or self.session
+        return self.session
 
     def _forget_cached_state(self) -> None:
         self._pane_id = None

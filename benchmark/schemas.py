@@ -57,7 +57,10 @@ class ChallengeResult(BaseModel):
     duration_seconds: float = 0.0
     error: str | None = None
     # Solve evidence metadata (for public reporting)
-    thread_id: str | None = None
+    # trace_id is the LangSmith trace identifier (= the LangGraph run_id from
+    # client.runs.create), giving observer a direct handle to fetch the full
+    # trace tree without needing thread_id-based metadata filtering.
+    trace_id: str | None = None
     token_count: int | None = None
     agent_summary: str | None = None
     # Cancel/teardown introspection: ground truth for whether the LangGraph run

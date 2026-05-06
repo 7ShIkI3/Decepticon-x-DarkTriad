@@ -458,8 +458,11 @@ def test_initialize_recreates_stale_cached_pane_without_error_string_matching():
 
     assert mgr._pane_id == "%new"
     assert "stale" in TmuxSessionManager._initialized
+    # Since df752a3, _target() returns the session name unconditionally to
+    # avoid the parallel-N pane-id race. send-keys must address the session
+    # ("stale"), not the pane id ("%new").
     sent_targets = [c.args[0][2] for c in mock_tmux.call_args_list if c.args[0][0] == "send-keys"]
-    assert "%new" in sent_targets
+    assert sent_targets and all(t == "stale" for t in sent_targets)
 
 
 def test_execute_recovers_initial_capture_failure_without_error_string_matching():

@@ -36,4 +36,10 @@ EXPOSE 2024
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -fsS http://localhost:2024/ok >/dev/null 2>&1 || exit 1
 
-CMD ["langgraph", "dev", "--host", "0.0.0.0", "--port", "2024", "--no-browser"]
+# --n-jobs-per-worker explicitly set to 10 to match the CLI help's stated
+# default. langgraph_api/cli.py:run_server falls back to N_JOBS_PER_WORKER=1
+# when the flag is omitted (despite `--help` saying "Default: 10"), which
+# caps the in-memory queue at 1 concurrent run and serialises any batch
+# bigger than 1. Without this override our benchmark batches with
+# `--parallel 5` queue 4 runs behind a single worker.
+CMD ["langgraph", "dev", "--host", "0.0.0.0", "--port", "2024", "--no-browser", "--n-jobs-per-worker", "10"]

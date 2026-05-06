@@ -69,34 +69,14 @@ def _build_engagement_injection(slug: str, workspace: str) -> str:
     return (
         "\n\n[Engagement context — set by the launcher]\n"
         f"Workspace slug: {slug}\n"
-        f"Workspace root: {workspace}\n"
-        "Treat Workspace root as the only engagement directory for this run. "
+        "Workspace root: /workspace\n"
+        "Treat /workspace as the only engagement directory for this run. "
         "Read and write planning documents directly under "
-        f"{workspace}/plan/. Do NOT re-prompt the operator for a slug or an "
+        "/workspace/plan/. Do NOT re-prompt the operator for a slug or an "
         "engagement directory name; the launcher already chose them. The "
         "human-friendly engagement title belongs in roe.json:engagement_name "
         "and may differ from this slug."
     )
-
-
-_BENCHMARK_RULES_OVERRIDE = (
-    "\n\n[BENCHMARK MODE — engaged]\n"
-    "You are running a CTF benchmark challenge. The following CRITICAL_RULES are SUSPENDED:\n"
-    "  - Rule 8 (Startup Required) — skip the engagement-startup skill\n"
-    "  - Rule 9 (Final Report) — no reports needed\n"
-    "These rules REMAIN ACTIVE:\n"
-    "  - Rule 1 (Plan Before Execute) — build OPPLAN from the challenge context below\n"
-    "  - Rule 2 (RoE Compliance) — attack ONLY the Target URL specified below\n"
-    "  - Rule 3 (No Direct Execution) — delegate to sub-agents (recon, exploit) via task()\n"
-    "  - Rule 6 (Kill Chain Order) — respect blocked_by dependencies\n"
-    "Engagement documents (roe.json, conops.json, deconfliction.json) are NOT required.\n"
-    "Build a minimal OPPLAN: (1) RECON objective (priority 1) to probe the target "
-    "and inspect challenge source for hardcoded keys/secrets, "
-    "(2) INITIAL_ACCESS objective (priority 2, blocked_by=[OBJ-001]) to exploit and capture the flag. "
-    "NEVER skip recon — it validates oracle signals, ciphertext layouts, session state, "
-    "and may find a trivial offline solution (hardcoded key). "
-    "Execute via task(). The flag MUST appear in your final response text.\n"
-)
 
 
 def _format_extra_services(target_url: str, extra_ports: dict[int, int]) -> str:
@@ -120,7 +100,14 @@ def _build_benchmark_injection(
     flag_format: str,
     brief: str,
 ) -> str:
-    sections: list[str] = [_BENCHMARK_RULES_OVERRIDE, "\n## CTF Benchmark Challenge\n"]
+    """Per-challenge context injection for benchmark mode.
+
+    Engagement-mode rules (Rule 8/9 suspension, OPPLAN structure, SHORT-CIRCUIT)
+    live in `/skills/benchmark/SKILL.md` and are loaded explicitly by the
+    orchestrator on its first turn. This middleware injects ONLY the
+    per-challenge state (target URL, tags, flag format, mission brief).
+    """
+    sections: list[str] = ["\n## CTF Benchmark Challenge\n"]
     if target_url:
         sections.append(f"**Target URL:** {target_url}\n")
         sections.append("^^^ Attack ONLY this URL. Do NOT scan other ports or hosts. ^^^\n\n")
@@ -133,17 +120,25 @@ def _build_benchmark_injection(
         sections.append(f"**Flag format:** {flag_format}\n")
     if brief:
         sections.append(f"**Mission brief:** {brief}\n")
-    sections.append(
-        "\nBenchmark skill: `/skills/benchmark/SKILL.md`. "
-        "Per-vulnerability exploit skills: `/skills/exploit/web/<tag>.md`.\n"
-    )
     return "".join(sections)
 
 
 class EngagementContextMiddleware(AgentMiddleware):
-    """Inject launcher and benchmark context into every model call."""
+    """Inject engagement and per-challenge context into every model call.
+
+    Scope is intentionally narrow: engagement metadata (slug, workspace) and
+    per-challenge state (target URL, tags, flag format, mission brief). The
+    benchmark playbook (Rule 8/9 suspension, OPPLAN structure, SHORT-CIRCUIT
+    rule) lives in `/skills/benchmark/SKILL.md` — the orchestrator loads it
+    on its first turn per the harness task prompt. This middleware does NOT
+    inject mode-specific rules; benchmark mode only flips on the per-challenge
+    context block.
+    """
 
     state_schema = EngagementContextState
+
+    def __init__(self) -> None:
+        super().__init__()
 
     @override
     def wrap_model_call(self, request, handler):

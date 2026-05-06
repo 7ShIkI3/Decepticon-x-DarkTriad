@@ -153,20 +153,41 @@ def test_benchmark_mode_env_off_does_not_inject_challenge_context(
     assert result is req
 
 
-def test_benchmark_mode_env_on_injects_rules_override(
+def test_benchmark_mode_injects_per_challenge_context_only(
     monkeypatch: pytest.MonkeyPatch,
     middleware: EngagementContextMiddleware,
 ) -> None:
-    """BENCHMARK_MODE=1 with empty state still injects the rule-suspension addendum."""
+    """BENCHMARK_MODE=1 injects per-challenge context only.
+
+    The benchmark playbook (Rule 8/9 suspension, OPPLAN structure, SHORT-CIRCUIT,
+    cross-domain skill paths) lives in /skills/benchmark/SKILL.md — middleware
+    must NOT inject any of it.
+    """
     monkeypatch.setenv("BENCHMARK_MODE", "1")
-    req = _FakeRequest(state={})
+    req = _FakeRequest(
+        state={
+            "target_url": "http://x",
+            "vulnerability_tags": ["idor"],
+            "flag_format": "FLAG{...}",
+            "mission_brief": "test",
+        }
+    )
     result = middleware._inject(req)
 
     text = _flatten(result.system_message)
-    assert "[BENCHMARK MODE — engaged]" in text
-    assert "Rule 8 (Startup Required)" in text
-    assert "Rule 9 (Final Report)" in text
-    assert "RECON objective" in text
+    # Playbook strings must NOT appear — they belong in /skills/benchmark/SKILL.md.
+    assert "[BENCHMARK MODE — engaged]" not in text
+    assert "Rule 8 (Startup Required)" not in text
+    assert "Rule 9 (Final Report)" not in text
+    assert "RECON objective" not in text
+    assert "/skills/exploit/web/" not in text
+    assert "/skills/benchmark/SKILL.md" not in text
+    # Per-challenge context IS injected.
+    assert "## CTF Benchmark Challenge" in text
+    assert "**Target URL:** http://x" in text
+    assert "**Vulnerability tags:** idor" in text
+    assert "**Flag format:** FLAG{...}" in text
+    assert "**Mission brief:** test" in text
 
 
 def test_benchmark_mode_full_context(
@@ -190,16 +211,18 @@ def test_benchmark_mode_full_context(
     text = _flatten(result.system_message)
     # engagement section
     assert "Workspace slug: benchmark-XBEN-001-24" in text
-    # benchmark section
-    assert "[BENCHMARK MODE — engaged]" in text
+    # per-challenge context
     assert "## CTF Benchmark Challenge" in text
     assert "**Target URL:** http://host.docker.internal:33001" in text
     assert "Attack ONLY this URL" in text
     assert "**Vulnerability tags:** sqli, auth-bypass" in text
     assert "**Flag format:** FLAG{<64-char-hex>}" in text
     assert "**Mission brief:** Login Form SQLi — bypass authentication" in text
-    # engagement section comes before benchmark section
-    assert text.index("Workspace slug:") < text.index("[BENCHMARK MODE")
+    # benchmark playbook must NOT be in middleware output
+    assert "[BENCHMARK MODE — engaged]" not in text
+    assert "/skills/exploit/web/" not in text
+    # engagement section comes before benchmark per-challenge section
+    assert text.index("Workspace slug:") < text.index("## CTF Benchmark Challenge")
 
 
 def test_benchmark_extra_ports(
@@ -253,7 +276,7 @@ def test_appended_to_existing_system_message(
     # original content is preserved; addendum is appended.
     assert "ORIGINAL_PROMPT_BODY" in text
     assert "Workspace slug: demo" in text
-    assert "[BENCHMARK MODE — engaged]" in text
+    assert "## CTF Benchmark Challenge" in text
     assert text.index("ORIGINAL_PROMPT_BODY") < text.index("Workspace slug")
 
 

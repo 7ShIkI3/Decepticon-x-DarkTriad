@@ -47,6 +47,15 @@ class EngagementFilesystemBackend(BackendProtocol):
         virtual = validate_path(path or WORKSPACE)
         if virtual in {"/", WORKSPACE}:
             return self._root
+        # Idempotent: if the path already points inside ``self._root`` it is
+        # already a real engagement path — return as-is. Without this guard
+        # the path gets re-prefixed and the engagement slug doubles, e.g.
+        # ``/workspace/benchmark-XBEN-006-24/exploit/x.txt`` would resolve to
+        # ``/workspace/benchmark-XBEN-006-24/benchmark-XBEN-006-24/exploit/x.txt``.
+        # Caller-side prompts no longer need to teach agents about virtual vs
+        # real paths — the backend accepts both.
+        if virtual == self._root or virtual.startswith(f"{self._root}/"):
+            return virtual
         rel = virtual.removeprefix(f"{WORKSPACE}/").lstrip("/")
         return f"{self._root}/{rel}" if rel else self._root
 
