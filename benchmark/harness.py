@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -542,7 +543,9 @@ class Harness:
                     # SDK does not auto-enable LangSmith tracing even when the
                     # langgraph container has LANGSMITH_TRACING=true; pass an
                     # explicit project_name so traces show up in the dashboard.
-                    langsmith_tracing={"project_name": "benchmark"},
+                    # Honor LANGSMITH_PROJECT from host env so the harness and
+                    # observer agree on the trace destination.
+                    langsmith_tracing={"project_name": os.getenv("LANGSMITH_PROJECT", "Benchmark")},
                 )
                 run_id = run["run_id"]
                 self._active_run_id = run_id
