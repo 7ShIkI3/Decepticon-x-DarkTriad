@@ -61,6 +61,19 @@ _DEFAULT_AUTH_PRIORITY: tuple[AuthMethod, ...] = (
     AuthMethod.MISTRAL_API,
     AuthMethod.OPENROUTER_API,
     AuthMethod.NVIDIA_API,
+    AuthMethod.GROQ_API,
+    AuthMethod.TOGETHER_API,
+    AuthMethod.FIREWORKS_API,
+    AuthMethod.COHERE_API,
+    AuthMethod.MOONSHOT_API,
+    AuthMethod.ZAI_API,
+    AuthMethod.DASHSCOPE_API,
+    AuthMethod.GITHUB_MODELS_API,
+    AuthMethod.BEDROCK_API,
+    AuthMethod.VERTEX_API,
+    AuthMethod.AZURE_API,
+    AuthMethod.LMSTUDIO_LOCAL,
+    AuthMethod.CUSTOM_OPENAI_API,
     AuthMethod.OLLAMA_LOCAL,
     AuthMethod.OLLAMA_CLOUD,
 )
@@ -80,6 +93,22 @@ _API_METHOD_ENV: dict[AuthMethod, str] = {
     AuthMethod.MISTRAL_API: "MISTRAL_API_KEY",
     AuthMethod.OPENROUTER_API: "OPENROUTER_API_KEY",
     AuthMethod.NVIDIA_API: "NVIDIA_API_KEY",
+    # Cloud gateways added in the OpenClaude provider migration. Each
+    # routes through LiteLLM's native provider implementation when the
+    # corresponding API key is present and not a placeholder.
+    AuthMethod.GROQ_API: "GROQ_API_KEY",
+    AuthMethod.TOGETHER_API: "TOGETHER_API_KEY",
+    AuthMethod.FIREWORKS_API: "FIREWORKS_API_KEY",
+    AuthMethod.COHERE_API: "COHERE_API_KEY",
+    AuthMethod.MOONSHOT_API: "MOONSHOT_API_KEY",
+    AuthMethod.ZAI_API: "ZAI_API_KEY",
+    AuthMethod.DASHSCOPE_API: "DASHSCOPE_API_KEY",
+    AuthMethod.GITHUB_MODELS_API: "GITHUB_TOKEN",
+    AuthMethod.BEDROCK_API: "AWS_ACCESS_KEY_ID",
+    # Vertex uses a service-account JSON path; treat the path env var as
+    # the credential signal so onboard's "real key" check works on it.
+    AuthMethod.VERTEX_API: "GOOGLE_APPLICATION_CREDENTIALS",
+    AuthMethod.AZURE_API: "AZURE_API_KEY",
 }
 
 _OAUTH_METHOD_ENV: dict[AuthMethod, str] = {
@@ -114,6 +143,25 @@ def _ollama_local_configured() -> bool:
     silently enable the method.
     """
     return bool(os.getenv("OLLAMA_API_BASE", "").strip() or os.getenv("OLLAMA_MODEL", "").strip())
+
+
+def _lmstudio_local_configured() -> bool:
+    """Return True when the user has wired up local LM Studio."""
+    return bool(
+        os.getenv("LMSTUDIO_API_BASE", "").strip() or os.getenv("LMSTUDIO_MODEL", "").strip()
+    )
+
+
+def _custom_openai_configured() -> bool:
+    """Return True when the user has wired up a custom OpenAI-compatible
+    endpoint. Both ``CUSTOM_OPENAI_API_BASE`` (URL) and
+    ``CUSTOM_OPENAI_API_KEY`` (real, non-placeholder) are required —
+    a base URL alone won't authenticate, and a key without a URL has
+    nowhere to point.
+    """
+    base = os.getenv("CUSTOM_OPENAI_API_BASE", "").strip()
+    key = os.getenv("CUSTOM_OPENAI_API_KEY", "")
+    return bool(base) and _is_real_key(key)
 
 
 def _is_real_key(value: str) -> bool:
@@ -186,6 +234,12 @@ def _resolve_credentials() -> Credentials:
         elif method == AuthMethod.OLLAMA_CLOUD:
             if _ollama_cloud_configured():
                 methods.append(method)
+        elif method == AuthMethod.LMSTUDIO_LOCAL:
+            if _lmstudio_local_configured():
+                methods.append(method)
+        elif method == AuthMethod.CUSTOM_OPENAI_API:
+            if _custom_openai_configured():
+                methods.append(method)
 
     if not methods:
         # Local-only or cloud-only OSS path: a user who set Ollama env vars
@@ -202,6 +256,12 @@ def _resolve_credentials() -> Credentials:
                 "running against Ollama Cloud exclusively"
             )
             return Credentials(methods=[AuthMethod.OLLAMA_CLOUD])
+        if _lmstudio_local_configured():
+            log.info("Only LMSTUDIO_API_BASE/LMSTUDIO_MODEL detected; using LM Studio")
+            return Credentials(methods=[AuthMethod.LMSTUDIO_LOCAL])
+        if _custom_openai_configured():
+            log.info("Only CUSTOM_OPENAI_* detected; using custom OpenAI-compatible endpoint")
+            return Credentials(methods=[AuthMethod.CUSTOM_OPENAI_API])
         log.info(
             "No credentials detected in environment; using all-API-methods "
             "fallback so module-level agent constructors stay importable"

@@ -143,20 +143,28 @@ OPENAI_API_KEY=sk-proj-...
 | MiniMax | `MINIMAX_API_KEY` | `eyJ...` | [minimax.io](https://minimax.io) |
 | OpenRouter | `OPENROUTER_API_KEY` | `sk-or-...` | [openrouter.ai](https://openrouter.ai) |
 | Replicate | `REPLICATE_API_TOKEN` | `r8_...` | [replicate.com](https://replicate.com) |
+| NVIDIA NIM | `NVIDIA_API_KEY` | `nvapi-...` | [build.nvidia.com](https://build.nvidia.com) |
+| Moonshot (Kimi K2) | `MOONSHOT_API_KEY` | `sk-...` | [platform.moonshot.cn](https://platform.moonshot.cn) |
+| Z.ai (GLM-4.5) | `ZAI_API_KEY` | `...` | [z.ai/manage](https://z.ai/manage) |
+| Alibaba DashScope (Qwen) | `DASHSCOPE_API_KEY` | `sk-...` | [dashscope.console.aliyun.com](https://dashscope.console.aliyun.com) |
+| GitHub Models | `GITHUB_TOKEN` | `github_pat_...` | [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens) |
 
 **Cloud platform providers:**
 
 | Provider | Required Env Vars |
 |----------|-------------------|
 | Azure OpenAI | `AZURE_API_KEY`, `AZURE_API_BASE`, `AZURE_API_VERSION` |
-| AWS Bedrock | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME` |
+| AWS Bedrock | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` |
+| GCP Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS`, `VERTEXAI_PROJECT`, `VERTEXAI_LOCATION` |
 
 **Self-hosted / OpenAI-compatible:**
 
 | Provider | Required Env Vars |
 |----------|-------------------|
 | Ollama (local) | `OLLAMA_API_BASE` + `OLLAMA_MODEL` — see [Local LLM (Ollama)](#local-llm-ollama) below |
-| Custom gateway | `CUSTOM_OPENAI_API_KEY`, `CUSTOM_OPENAI_API_BASE` |
+| Ollama Cloud | `OLLAMA_CLOUD_API_BASE`, `OLLAMA_CLOUD_API_KEY`, `OLLAMA_CLOUD_MODEL` |
+| LM Studio (local) | `LMSTUDIO_API_BASE` + `LMSTUDIO_MODEL` (server on port 1234) |
+| Custom gateway | `CUSTOM_OPENAI_API_KEY`, `CUSTOM_OPENAI_API_BASE`, `CUSTOM_OPENAI_MODEL` |
 
 ---
 

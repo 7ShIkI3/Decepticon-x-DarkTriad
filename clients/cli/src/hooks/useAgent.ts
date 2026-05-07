@@ -24,6 +24,7 @@ import {
   extractText,
   stripResultTags,
 } from "@decepticon/streaming";
+import { getModelOverride } from "../commands/modelOverride.js";
 
 interface LangChainMessage {
   type: string; // "human", "ai", "tool"
@@ -692,12 +693,25 @@ export function useAgent({
           input.workspace_path = process.env.DECEPTICON_WORKSPACE_PATH ?? "/workspace";
         }
 
+        // /model command — inject the active runtime override into BOTH
+        // input state and config.configurable. The agent's
+        // ModelOverrideMiddleware reads either path, so the call works
+        // whether the LangGraph runtime surfaces the field via state or
+        // via the runnable config.
+        const modelOverride = getModelOverride();
+        const streamConfig: { configurable?: Record<string, unknown> } = {};
+        if (modelOverride) {
+          input.model_override = modelOverride;
+          streamConfig.configurable = { model_override: modelOverride };
+        }
+
         try {
           const stream = client.runs.stream(
             threadIdRef.current!,
             assistantIdRef.current,
             {
               input,
+              ...(modelOverride ? { config: streamConfig } : {}),
               ...STREAM_OPTIONS,
               onDisconnect: "continue",
               signal: abortController.signal,

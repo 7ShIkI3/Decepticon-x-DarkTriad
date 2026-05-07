@@ -33,12 +33,14 @@ PROVIDER_API_KEY_ENV: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
     "azure": "AZURE_API_KEY",
     "bedrock": "AWS_ACCESS_KEY_ID",
+    "vertex_ai": "GOOGLE_APPLICATION_CREDENTIALS",
     "gemini": "GOOGLE_API_KEY",
     "google": "GOOGLE_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
     "groq": "GROQ_API_KEY",
     "mistral": "MISTRAL_API_KEY",
     "cohere": "COHERE_API_KEY",
+    "cohere_chat": "COHERE_API_KEY",
     "together": "TOGETHER_API_KEY",
     "together_ai": "TOGETHER_API_KEY",
     "fireworks": "FIREWORKS_API_KEY",
@@ -47,8 +49,20 @@ PROVIDER_API_KEY_ENV: dict[str, str] = {
     "xai": "XAI_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
     "nvidia": "NVIDIA_API_KEY",
+    "nvidia_nim": "NVIDIA_API_KEY",
     "replicate": "REPLICATE_API_TOKEN",
     "minimax": "MINIMAX_API_KEY",
+    # New providers from the OpenClaude migration. LiteLLM ships native
+    # support for each — only the env-var mapping needs to be wired here.
+    "moonshot": "MOONSHOT_API_KEY",
+    "dashscope": "DASHSCOPE_API_KEY",
+    # LiteLLM's GitHub Models provider reads GITHUB_API_KEY (not the
+    # GitHub-conventional GITHUB_TOKEN). Onboard writes both to the
+    # .env so docs that reference GITHUB_TOKEN keep working.
+    "github": "GITHUB_API_KEY",
+    "lm_studio": "LMSTUDIO_API_KEY",  # LM Studio accepts any string; keep
+    # symbolic so validate_model_name() lets the route through.
+    "zai": "ZAI_API_KEY",
 }
 
 ALLOWED_DYNAMIC_PROVIDERS = frozenset(
@@ -73,6 +87,11 @@ ALLOWED_DYNAMIC_PROVIDERS = frozenset(
         "custom",
     }
 )
+# ``_provider_prefix`` normalizes ``vertex-ai`` → ``vertex_ai`` already,
+# but the bare model id ``vertex_ai/<m>`` carries the underscore form
+# directly. Keep a defensive alias entry — the spread above only covers
+# what's in PROVIDER_API_KEY_ENV with the same casing.
+ALLOWED_DYNAMIC_PROVIDERS = frozenset(ALLOWED_DYNAMIC_PROVIDERS | {"vertex_ai"})
 
 # Environment variables that are model-selection controls, not model names.
 _MODEL_CONTROL_SUFFIXES = (
@@ -224,6 +243,23 @@ def build_model_entry(model_name: str) -> dict[str, Any]:
             "api_key": "os.environ/CUSTOM_OPENAI_API_KEY",
             "api_base": "os.environ/CUSTOM_OPENAI_API_BASE",
         }
+    elif provider == "zai":
+        # LiteLLM 1.55+ ships a native ``zai/`` provider — pass the model
+        # id through verbatim and let LiteLLM resolve the base URL +
+        # ZAI_API_KEY internally.
+        params = {
+            "model": model_name,
+            "api_key": "os.environ/ZAI_API_KEY",
+        }
+    elif provider == "lm_studio":
+        # LM Studio runs locally as an OpenAI-compatible server. The
+        # base URL comes from LMSTUDIO_API_BASE (default localhost:1234).
+        # No real key is required; LM Studio accepts any string.
+        params = {
+            "model": model_name,
+            "api_base": "os.environ/LMSTUDIO_API_BASE",
+            "api_key": "os.environ/LMSTUDIO_API_KEY",
+        }
     else:
         params = {"model": model_name}
         if provider == "ollama_chat":
@@ -232,6 +268,22 @@ def build_model_entry(model_name: str) -> dict[str, Any]:
             # ``ollama_chat/`` (which routes to /api/chat with tool support)
             # reaches this branch.
             params["api_base"] = "os.environ/OLLAMA_API_BASE"
+        elif provider == "bedrock":
+            # AWS Bedrock — uses AWS SigV4 with three env vars rather
+            # than an Authorization header. LiteLLM reads them
+            # automatically; we just don't set api_key.
+            pass
+        elif provider == "vertex_ai":
+            # Vertex AI — service-account JSON path + project + location.
+            # LiteLLM reads GOOGLE_APPLICATION_CREDENTIALS automatically;
+            # only project + location need to be passed through.
+            params["vertex_project"] = "os.environ/VERTEXAI_PROJECT"
+            params["vertex_location"] = "os.environ/VERTEXAI_LOCATION"
+        elif provider == "azure":
+            # Azure OpenAI deployment — needs base URL + version.
+            params["api_key"] = "os.environ/AZURE_API_KEY"
+            params["api_base"] = "os.environ/AZURE_API_BASE"
+            params["api_version"] = "os.environ/AZURE_API_VERSION"
         else:
             api_key_env = PROVIDER_API_KEY_ENV.get(provider, _derived_api_key_env(provider))
             params["api_key"] = f"os.environ/{api_key_env}"

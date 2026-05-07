@@ -199,13 +199,19 @@ def create_decepticon_agent():
         ),
     ]
 
-    # Assemble middleware stack
+    # Assemble middleware stack. ModelOverrideMiddleware sits ahead of
+    # ModelFallbackMiddleware so the CLI ``/model`` command can swap the
+    # primary at runtime while the user-configured fallback chain still
+    # applies on its failure.
+    from decepticon.middleware.model_override import ModelOverrideMiddleware
+
     middleware = [
         EngagementContextMiddleware(),
         SkillsMiddleware(backend=backend, sources=["/skills/decepticon/", "/skills/shared/"]),
         FilesystemMiddleware(backend=backend),
         SubAgentMiddleware(backend=backend, subagents=subagents),
         OPPLANMiddleware(),
+        ModelOverrideMiddleware(),
     ]
     if fallback_models:
         middleware.append(ModelFallbackMiddleware(*fallback_models))

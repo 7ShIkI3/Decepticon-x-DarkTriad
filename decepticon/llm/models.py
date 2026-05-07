@@ -97,6 +97,20 @@ class AuthMethod(StrEnum):
     COPILOT_OAUTH = "copilot_oauth"  # Microsoft Copilot Pro subscription
     GROK_OAUTH = "grok_oauth"  # xAI SuperGrok (X Premium+)
     PERPLEXITY_OAUTH = "perplexity_oauth"  # Perplexity Pro subscription
+    # ── Cloud gateways (multi-vendor model hubs, API-key auth) ──
+    BEDROCK_API = "bedrock_api"  # AWS Bedrock (Anthropic/Llama/Mistral via AWS)
+    VERTEX_API = "vertex_api"  # GCP Vertex AI (Anthropic/Gemini via GCP)
+    AZURE_API = "azure_api"  # Azure OpenAI Service
+    GROQ_API = "groq_api"  # Groq Cloud (LPU inference)
+    TOGETHER_API = "together_api"  # Together AI
+    FIREWORKS_API = "fireworks_api"  # Fireworks AI
+    COHERE_API = "cohere_api"  # Cohere Command
+    MOONSHOT_API = "moonshot_api"  # Moonshot Kimi K2
+    ZAI_API = "zai_api"  # Z.ai GLM-4.5
+    DASHSCOPE_API = "dashscope_api"  # Alibaba DashScope (Qwen)
+    GITHUB_MODELS_API = "github_models_api"  # GitHub Models (PAT auth)
+    LMSTUDIO_LOCAL = "lmstudio_local"  # Local LM Studio (OpenAI-compatible)
+    CUSTOM_OPENAI_API = "custom_openai_api"  # Custom OpenAI-compatible endpoint
 
 
 # ── Tier × AuthMethod → model_id matrix ─────────────────────────────────
@@ -199,6 +213,114 @@ METHOD_MODELS: dict[AuthMethod, dict[Tier, str]] = {
     AuthMethod.PERPLEXITY_OAUTH: {
         Tier.HIGH: "pplx-sub/sonar-pro",
         Tier.MID: "pplx-sub/sonar",
+    },
+    # ── Cloud gateways ──
+    # AWS Bedrock — Anthropic models hosted on AWS. Uses bedrock/<model>
+    # which LiteLLM resolves via the bedrock-runtime SDK using
+    # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION.
+    AuthMethod.BEDROCK_API: {
+        # Bedrock model IDs verified May 2026 against AWS Bedrock model
+        # cards. Opus 4.7 + Sonnet 4.6 dropped the -v1:0 suffix; Haiku
+        # keeps a date+version suffix on bedrock-runtime/invoke.
+        Tier.HIGH: "bedrock/anthropic.claude-opus-4-7",
+        Tier.MID: "bedrock/anthropic.claude-sonnet-4-6",
+        Tier.LOW: "bedrock/anthropic.claude-haiku-4-5-20251001-v1:0",
+    },
+    # GCP Vertex AI — Claude + Gemini hosted on Google Cloud. Uses
+    # vertex_ai/<model> with GOOGLE_APPLICATION_CREDENTIALS service-account
+    # JSON path + VERTEXAI_PROJECT + VERTEXAI_LOCATION.
+    AuthMethod.VERTEX_API: {
+        # Vertex Anthropic models use @latest aliases when no specific
+        # snapshot is needed. Override per-role via DECEPTICON_MODEL_<ROLE>
+        # to pin a specific @YYYYMMDD snapshot from the Model Garden.
+        Tier.HIGH: "vertex_ai/claude-opus-4-7@latest",
+        Tier.MID: "vertex_ai/claude-sonnet-4-6@latest",
+        Tier.LOW: "vertex_ai/gemini-2.5-flash",
+    },
+    # Azure OpenAI Service — model names are deployment IDs, so the user
+    # configures AZURE_API_KEY + AZURE_API_BASE + AZURE_API_VERSION + their
+    # deployment names. The defaults below assume standard deployment
+    # naming; users can override per role via DECEPTICON_MODEL_<ROLE>.
+    AuthMethod.AZURE_API: {
+        Tier.HIGH: "azure/gpt-5.5",
+        Tier.MID: "azure/gpt-5.4",
+        Tier.LOW: "azure/gpt-5-nano",
+    },
+    # Groq — LPU inference, fast Llama. groq/<model>.
+    # llama-3.1-70b-versatile was retired in 2026; using Llama 4 Scout
+    # (Groq production model) at MID since Llama 3.3 70B sits at HIGH.
+    AuthMethod.GROQ_API: {
+        Tier.HIGH: "groq/llama-3.3-70b-versatile",
+        Tier.MID: "groq/meta-llama/llama-4-scout-17b-16e-instruct",
+        Tier.LOW: "groq/llama-3.1-8b-instant",
+    },
+    # Together AI — together_ai/<model>.
+    AuthMethod.TOGETHER_API: {
+        Tier.HIGH: "together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        Tier.MID: "together_ai/mistralai/Mixtral-8x22B-Instruct-v0.1",
+        Tier.LOW: "together_ai/meta-llama/Llama-3.2-3B-Instruct-Turbo",
+    },
+    # Fireworks AI — fireworks_ai/<model>. All three default to Llama
+    # variants because Fireworks-hosted Mixtral does not reliably honor
+    # the OpenAI tools schema and Decepticon agents always emit tool
+    # calls. Override via DECEPTICON_MODEL_<ROLE> for non-tool roles.
+    AuthMethod.FIREWORKS_API: {
+        Tier.HIGH: "fireworks_ai/accounts/fireworks/models/llama-v3p3-70b-instruct",
+        Tier.MID: "fireworks_ai/accounts/fireworks/models/llama-v3p1-70b-instruct",
+        Tier.LOW: "fireworks_ai/accounts/fireworks/models/llama-v3p2-3b-instruct",
+    },
+    # Cohere Command — cohere_chat/<model> (v2 API, supports tool use).
+    # The bare ``cohere/`` prefix routes to the legacy completion
+    # endpoint which silently drops the ``tools`` parameter; Decepticon
+    # agents always emit tool calls so v2 is the only viable route.
+    AuthMethod.COHERE_API: {
+        Tier.HIGH: "cohere_chat/command-a-03-2025",
+        Tier.MID: "cohere_chat/command-r-plus",
+        Tier.LOW: "cohere_chat/command-r",
+    },
+    # Moonshot Kimi K2 — moonshot/<model>. K2 generation uses a single
+    # ``kimi-k2-instruct`` ID (context window negotiated at the
+    # request level, not encoded in the model id). Older v1 models
+    # keep their context-tier suffixes (8k/32k/128k).
+    AuthMethod.MOONSHOT_API: {
+        Tier.HIGH: "moonshot/kimi-k2-instruct",
+        Tier.MID: "moonshot/moonshot-v1-128k",
+        Tier.LOW: "moonshot/moonshot-v1-8k",
+    },
+    # Z.ai GLM family — native ``zai/`` LiteLLM provider (no custom shim
+    # needed since LiteLLM 1.55+). LOW = glm-4.5-flash, the free-tier
+    # model.
+    AuthMethod.ZAI_API: {
+        Tier.HIGH: "zai/glm-4.5",
+        Tier.MID: "zai/glm-4.5-air",
+        Tier.LOW: "zai/glm-4.5-flash",
+    },
+    # Alibaba DashScope (Qwen) — dashscope/<model>.
+    AuthMethod.DASHSCOPE_API: {
+        Tier.HIGH: "dashscope/qwen-max",
+        Tier.MID: "dashscope/qwen-plus",
+        Tier.LOW: "dashscope/qwen-turbo",
+    },
+    # GitHub Models — github/<model>, GITHUB_TOKEN PAT auth.
+    AuthMethod.GITHUB_MODELS_API: {
+        Tier.HIGH: "github/gpt-5.5",
+        Tier.MID: "github/gpt-5.4",
+        Tier.LOW: "github/gpt-5-nano",
+    },
+    # LM Studio — local OpenAI-compatible server. Like OLLAMA_LOCAL the
+    # tier collapses to a single user-chosen model resolved at
+    # chain-build time from LMSTUDIO_MODEL.
+    AuthMethod.LMSTUDIO_LOCAL: {
+        Tier.HIGH: "lm_studio/__LMSTUDIO_MODEL__",
+        Tier.MID: "lm_studio/__LMSTUDIO_MODEL__",
+        Tier.LOW: "lm_studio/__LMSTUDIO_MODEL__",
+    },
+    # Custom OpenAI-compatible endpoint — collapses tiers, model id from
+    # CUSTOM_OPENAI_MODEL, base URL from CUSTOM_OPENAI_API_BASE.
+    AuthMethod.CUSTOM_OPENAI_API: {
+        Tier.HIGH: "custom/__CUSTOM_OPENAI_MODEL__",
+        Tier.MID: "custom/__CUSTOM_OPENAI_MODEL__",
+        Tier.LOW: "custom/__CUSTOM_OPENAI_MODEL__",
     },
 }
 
@@ -308,6 +430,8 @@ class Credentials(BaseModel):
 
 _OLLAMA_DEFAULT_MODEL = "llama3.2"
 _OLLAMA_CLOUD_DEFAULT_MODEL = "llama3.2"
+_LMSTUDIO_DEFAULT_MODEL = "qwen2.5-coder-7b-instruct"
+_CUSTOM_OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
 
 
 def _resolve_ollama_model() -> str | None:
@@ -351,6 +475,42 @@ def _resolve_ollama_cloud_model() -> str | None:
     return f"ollama_chat/{model}"
 
 
+def _resolve_lmstudio_model() -> str | None:
+    """Return the LiteLLM model id for the user's LM Studio, or None.
+
+    LM Studio exposes an OpenAI-compatible server on
+    ``LMSTUDIO_API_BASE`` (default ``http://host.docker.internal:1234/v1``).
+    The model id comes from ``LMSTUDIO_MODEL``. Returns None when neither
+    env var is set so resolve_chain skips the method without leaking the
+    placeholder ``lm_studio/__LMSTUDIO_MODEL__`` into the chain.
+    """
+    base = os.getenv("LMSTUDIO_API_BASE", "").strip()
+    model = os.getenv("LMSTUDIO_MODEL", "").strip()
+    if not base and not model:
+        return None
+    if not model:
+        model = _LMSTUDIO_DEFAULT_MODEL
+    return f"lm_studio/{model}"
+
+
+def _resolve_custom_openai_model() -> str | None:
+    """Return the LiteLLM model id for the user's custom endpoint, or None.
+
+    Routed via the dynamic ``custom/`` provider in
+    ``litellm_dynamic_config`` which sets ``api_base`` from
+    ``CUSTOM_OPENAI_API_BASE`` and ``api_key`` from
+    ``CUSTOM_OPENAI_API_KEY``. The actual model name comes from
+    ``CUSTOM_OPENAI_MODEL``.
+    """
+    base = os.getenv("CUSTOM_OPENAI_API_BASE", "").strip()
+    model = os.getenv("CUSTOM_OPENAI_MODEL", "").strip()
+    if not base and not model:
+        return None
+    if not model:
+        model = _CUSTOM_OPENAI_DEFAULT_MODEL
+    return f"custom/{model}"
+
+
 def resolve_chain(tier: Tier, credentials: Credentials) -> list[str]:
     """Build the model chain (primary first, then fallbacks) for a tier.
 
@@ -377,6 +537,16 @@ def resolve_chain(tier: Tier, credentials: Credentials) -> list[str]:
             ollama_cloud_model = _resolve_ollama_cloud_model()
             if ollama_cloud_model is not None:
                 chain.append(ollama_cloud_model)
+            continue
+        if method == AuthMethod.LMSTUDIO_LOCAL:
+            lmstudio_model = _resolve_lmstudio_model()
+            if lmstudio_model is not None:
+                chain.append(lmstudio_model)
+            continue
+        if method == AuthMethod.CUSTOM_OPENAI_API:
+            custom_model = _resolve_custom_openai_model()
+            if custom_model is not None:
+                chain.append(custom_model)
             continue
         model = METHOD_MODELS[method].get(tier)
         if model is not None:
