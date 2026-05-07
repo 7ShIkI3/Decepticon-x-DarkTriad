@@ -40,31 +40,34 @@ DIFFICULTY = {
 }
 LEVELS = ["L1 (Easy)", "L2 (Medium)", "L3 (Hard)"]
 
-# Decepticon — pass/fail by difficulty (interim, L2 in progress).
+# Decepticon — pass/fail on L1+L3 only (the comparable, completed slice).
+# L2 (51 challenges) is still being run, so it is intentionally excluded
+# from the headline charts; tracked separately.
 DECEPTICON_PIE = [
-    ("L1 passed",         42, "#2ecc71"),
-    ("L2 passed (so far)",  9, "#f1c40f"),
-    ("L3 passed",          7, "#27ae60"),
-    ("Not solved",        46, "#bdc3c7"),
+    ("L1 passed (42 / 45)",  42, "#2ecc71"),
+    ("L3 passed (7 / 8)",     7, "#27ae60"),
+    ("Not solved (L1+L3)",    4, "#bdc3c7"),
 ]
 
-# Decepticon attack-class coverage.
+# Decepticon attack-class coverage — L1 + L3 contributions only.
+# L2 confirmed solves are shown separately in the README matrix; excluded
+# from this chart so the perspective stays "completed sweeps only."
 COVERAGE = [
-    ("XSS",                14),
-    ("Command Injection",   7),
-    ("Default Credentials", 7),
-    ("SSTI",                6),
-    ("IDOR",                6),
-    ("SQL Injection",       5),
-    ("LFI",                 5),
-    ("Privilege Escalation",5),
-    ("Information Disc.",   4),
-    ("Business Logic",      4),
-    ("Arbitrary Upload",    4),
-    ("SSRF",                3),
-    ("Path Traversal",      3),
-    ("XXE",                 3),
-    ("Insecure Deserial.",  3),
+    ("XSS",                 11),  # 8 L1 + 3 L3
+    ("Command Injection",    6),  # 6 L1
+    ("Default Credentials",  5),  # 4 L1 + 1 L3
+    ("SSTI",                 5),  # 4 L1 + 1 L3
+    ("SQL Injection",        5),  # 5 L1
+    ("IDOR",                 4),  # 4 L1
+    ("LFI",                  4),  # 4 L1
+    ("Privilege Escalation", 4),  # 4 L1
+    ("Information Disc.",    4),  # 4 L1
+    ("Business Logic",       4),  # 4 L1
+    ("SSRF",                 3),  # 3 L1
+    ("Path Traversal",       3),  # 3 L1
+    ("XXE",                  3),  # 3 L1
+    ("Arbitrary Upload",     3),  # 3 L1
+    ("Insecure Deserial.",   2),  # 1 L1 + 1 L3
 ]
 
 # ---------------------------------------------------------------------------
@@ -169,8 +172,8 @@ def chart_decepticon_donut() -> Path:
     legend = [f"{lab} — {n} ({n / total:.1%})" for lab, n in zip(labels, sizes)]
     ax.legend(wedges, legend, loc="center left", bbox_to_anchor=(1.0, 0.5),
               frameon=False, fontsize=10)
-    ax.set_title("Decepticon — Confirmed Passes on XBOW\n"
-                 "L1 + L3 complete (49 / 53 = 92.5 %)  ·  L2 sweep in progress",
+    ax.set_title("Decepticon on XBOW — L1 + L3 (completed sweeps)\n"
+                 "49 / 53 = 92.5 %  ·  L2 sweep in progress (shown separately)",
                  fontsize=12)
     return save(fig, "decepticon_donut.png")
 
@@ -190,9 +193,12 @@ def chart_coverage() -> Path:
         ax.text(v + 0.15, bar.get_y() + bar.get_height() / 2,
                 str(v), va="center", fontsize=9)
     ax.set_xlim(0, max(values) + 2)
-    ax.set_xlabel("Confirmed end-to-end exploits")
-    ax.set_title("Decepticon — Web Attack Class Coverage on XBOW")
+    ax.set_xlabel("Confirmed end-to-end exploits (L1 + L3 only)")
+    ax.set_title("Decepticon — Web Attack Class Coverage on XBOW (L1 + L3)")
     ax.grid(axis="x", linestyle=":", alpha=0.4)
+    fig.text(0.01, 0.01,
+             "L2 sweep is in progress — L2 contributions tracked separately in benchmark/results/README.md.",
+             fontsize=8, style="italic", color="#555")
     return save(fig, "coverage.png")
 
 
