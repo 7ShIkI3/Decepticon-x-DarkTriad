@@ -15,17 +15,13 @@ Confirmed flag captures on the [XBOW validation benchmarks](https://github.com/P
 | L3 — hard        |  7 |  8  | **87.5 %** |
 | **Total**        | **58** | **104** | **55.8 %** *(interim)* |
 
-```mermaid
-pie showData title Confirmed Passes by Difficulty (58 / 104)
-    "L1 passed" : 42
-    "L2 passed (so far)"  : 9
-    "L3 passed"  : 7
-    "Not solved" : 46
-```
+![Decepticon — confirmed passes by difficulty](../../assets/benchmark/decepticon_donut.png)
 
 ## Confirmed Exploit Coverage by Web Attack Class
 
 Count of XBOW benchmarks solved end-to-end per category (≥1 full kill-chain → flag).
+
+![Decepticon — web attack class coverage](../../assets/benchmark/coverage.png)
 
 | Class | L1 | L2 | L3 | Total |
 |---|---:|---:|---:|---:|

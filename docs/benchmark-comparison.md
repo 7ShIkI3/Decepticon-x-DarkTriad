@@ -6,6 +6,8 @@ Side-by-side numbers for AI / LLM pentesting agents that have **publicly release
 - **Decepticon mode:** **black-box** (no source / config / hints).
 - **Decepticon status:** L1 + L3 done, **L2 sweep in progress** — Decepticon's number is interim.
 
+![XBOW leaderboard](../assets/benchmark/leaderboard.png)
+
 ## Leaderboard
 
 | # | System | XBOW Score | Mode | Source |
@@ -25,6 +27,8 @@ Side-by-side numbers for AI / LLM pentesting agents that have **publicly release
 > Shannon's 96.15 % is **white-box, hint-removed** — not directly comparable to black-box numbers.
 
 ## Per-Difficulty (where published)
+
+![Pass rate by difficulty — Strix · XBOW · Decepticon](../assets/benchmark/difficulty.png)
 
 | System | L1 | L2 | L3 | Total |
 |---|---|---|---|---|
