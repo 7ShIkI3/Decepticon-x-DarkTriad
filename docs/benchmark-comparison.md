@@ -7,7 +7,7 @@ Side-by-side numbers for AI / LLM pentesting agents that have **publicly release
   <img src="../assets/benchmark/leaderboard.png" alt="XBOW leaderboard — Decepticon at 98.08 %" width="780">
 </div>
 
-- **Decepticon mode** — black-box (no source code, no config, no service internals) **with the per-challenge `Vulnerability tags:` provided to the agent as a hint** — the same metadata that `xbow-engineering/validation-benchmarks` ships in each challenge's `benchmark.yaml`. The agent discovers endpoints, parameters, sinks, payloads, and gadgets on its own; the tags only narrow the attack-class search space. Other systems in this leaderboard report whichever hint regime their authors selected — read their primary sources before pixel-matching the pass rates.
+- **Decepticon mode** — black-box (no source code, no config, no service internals). The agent receives the per-challenge `benchmark.yaml` metadata as engagement context: the one-line `description`, the `Vulnerability tags:` list (e.g. `idor`, `default_credentials`, `ssti`), and the flag format. The agent discovers endpoints, parameters, sinks, payloads, and gadgets on its own. **Compared to Strix** [^strix-method]: Strix passes the `description` only, not the tags — so this table's two black-box leaders sit at slightly different hint levels (Decepticon: description + tags; Strix: description only).
 - **Decepticon status** — cycle-4 final · 102 / 104 (98.08 %). L1 complete; L2 50/51 (one outstanding); L3 7/8 (one outstanding).
 - **Per-challenge evidence + LangSmith traces** — [`benchmark/results/README.md`](../benchmark/results/README.md).
 
@@ -15,21 +15,22 @@ Side-by-side numbers for AI / LLM pentesting agents that have **publicly release
 
 | # | System | XBOW Score | Mode | Source |
 |--:|---|---|---|---|
-|  1 | **Shannon Lite** (KeygraphHQ)        | **96.15 %** (100 / 104) | white-box, hint-removed   | [github](https://github.com/KeygraphHQ/shannon) |
-|  1 | **Strix** (usestrix)                 | **96.15 %** (100 / 104) [^strix] | black-box                 | [github](https://github.com/usestrix/strix) |
-|  3 | **PentestGPT** (USENIX '24)          | **86.5 %** (90 / 104)   | black-box                 | [github](https://github.com/GreyDGL/PentestGPT) · [paper](https://www.usenix.org/conference/usenixsecurity24/presentation/deng) |
-|  4 | **Red-MIRROR**                       | **86.0 %**              | black-box, multi-agent + RAG | arXiv [2603.27127](https://arxiv.org/abs/2603.27127) |
-|  5 | **XBOW** (commercial)                | **≈85 %**               | black-box, proprietary    | [xbow.com/blog/benchmarks](https://xbow.com/blog/benchmarks) |
-|  6 | **Cyber-AutoAgent** (westonbrown)    | **84.62 %** (88 / 104) — v0.1.3 [archived]; 81 % v0.1.1; 45.92 % (45/98) v0.1.0 | black-box, meta-agent | [github](https://github.com/westonbrown/Cyber-AutoAgent) |
-|  7 | **MAPTA**                            | **76.9 %** (80 / 104)   | black-box, multi-agent    | arXiv [2508.20816](https://arxiv.org/abs/2508.20816) |
-|  8 | **Decepticon** *(this repo)*         | **98.08 %** (102 / 104) — L1: 100 % (45/45) · L2: 98.0 % (50/51) · L3: 87.5 % (7/8) | **black-box**, LangGraph multi-agent | [github](https://github.com/PurpleAILAB/Decepticon) |
+|  **1** | **Decepticon** *(this repo)*     | **98.08 %** (102 / 104) — L1: 100 % (45/45) · L2: 98.0 % (50/51) · L3: 87.5 % (7/8) | **black-box**, LangGraph multi-agent | [github](https://github.com/PurpleAILAB/Decepticon) |
+|  2 | **Shannon Lite** (KeygraphHQ)        | **96.15 %** (100 / 104) | white-box, hint-removed   | [github](https://github.com/KeygraphHQ/shannon) |
+|  2 | **Strix** (usestrix)                 | **96.15 %** (100 / 104) [^strix] | black-box                 | [github](https://github.com/usestrix/strix) |
+|  4 | **PentestGPT** (USENIX '24)          | **86.5 %** (90 / 104)   | black-box                 | [github](https://github.com/GreyDGL/PentestGPT) · [paper](https://www.usenix.org/conference/usenixsecurity24/presentation/deng) |
+|  5 | **Red-MIRROR**                       | **86.0 %**              | black-box, multi-agent + RAG | arXiv [2603.27127](https://arxiv.org/abs/2603.27127) |
+|  6 | **XBOW** (commercial)                | **≈85 %**               | black-box, proprietary    | [xbow.com/blog/benchmarks](https://xbow.com/blog/benchmarks) |
+|  7 | **Cyber-AutoAgent** (westonbrown)    | **84.62 %** (88 / 104) — v0.1.3 [archived]; 81 % v0.1.1; 45.92 % (45/98) v0.1.0 | black-box, meta-agent | [github](https://github.com/westonbrown/Cyber-AutoAgent) |
+|  8 | **MAPTA**                            | **76.9 %** (80 / 104)   | black-box, multi-agent    | arXiv [2508.20816](https://arxiv.org/abs/2508.20816) |
 |  9 | PentestAgent                         | 50.0 % [^retest]        | black-box                 | arXiv 2411.05185; re-tested in Red-MIRROR |
 | 10 | AutoPT                               | 46.0 % [^retest]        | black-box                 | re-tested in Red-MIRROR |
 | 11 | VulnBot                              |  6.0 % [^retest]        | black-box, baseline       | arXiv [2501.13411](https://arxiv.org/abs/2501.13411); re-tested in Red-MIRROR |
 
 > Shannon's 96.15 % is **white-box, hint-removed** — not directly comparable to black-box numbers.
 
-[^strix]: Strix per-difficulty (45/45 · 49/51 · 6/8 = 100/104 = 96.15 %) sourced from project's published benchmark table; we could not independently re-confirm the per-difficulty split from a primary indexed source — treat the per-level split as project-reported.
+[^strix]: Strix per-difficulty (45/45 · 49/51 · 6/8 = 100/104 = 96.15 %) sourced from the [`usestrix/benchmarks` XBEN page](https://github.com/usestrix/benchmarks/tree/main/XBEN) (v0.4.0; avg solve time ~19 min; ~$337 total) and re-confirmed against the project's published benchmark table.
+[^strix-method]: Strix's [`XBEN/run_infer.py`](https://github.com/usestrix/benchmarks/blob/main/XBEN/run_infer.py) builds the instruction as `"You are an expert CTF player. Your goal is to find a flag in the format flag{...}. ... {description}"` — only the `description` field from `benchmark.json` is concatenated into the prompt; the `tags` field is recorded in the result but not passed to the agent.
 [^retest]: 50 % / 46 % / 6 % numbers come from the **Red-MIRROR ablation** re-running these systems on XBOW, not from the systems' own papers (VulnBot's own paper uses AutoPenBench).
 
 ## Per-Difficulty (where published)

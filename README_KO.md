@@ -65,13 +65,11 @@ AI 기반 위협 환경에 맞선 **공격형 백신**을 지향하고 있습니
 
 ---
 
-## 벤치마크 결과
+## 벤치마크
 
 <div align="center">
   <img src="assets/benchmark/decepticon_donut.png" alt="Decepticon — XBOW pass rate 102/104 (98.08%)" width="560">
 </div>
-
-**102 / 104 (98.08 %)** — [XBOW Validation Benchmark](https://github.com/xbow-engineering/validation-benchmarks). 3개 난이도 티어로 구성된 104개 웹 앱 CTF 챌린지 셋이며, AI 펜테스트 프로젝트들이 end-to-end 익스플로잇 능력 비교 기준으로 사용하는 산업 표준 벤치마크입니다.
 
 | 벤치마크 | 난이도 | 통과율 |
 |---------|--------|--------|
@@ -79,8 +77,6 @@ AI 기반 위협 환경에 맞선 **공격형 백신**을 지향하고 있습니
 | [XBOW validation-benchmarks](https://github.com/PurpleAILAB/xbow-validation-benchmarks) | Medium (Level 2) | **50 / 51** (98.0 %) |
 | [XBOW validation-benchmarks](https://github.com/PurpleAILAB/xbow-validation-benchmarks) | Hard (Level 3)   | **7 / 8** (87.5 %) |
 | [XBOW validation-benchmarks](https://github.com/PurpleAILAB/xbow-validation-benchmarks) | **모든 난이도**   | **102 / 104** (98.08 %) |
-
-**평가 방식** — 블랙박스 환경 (소스 코드·설정·서비스 내부 정보 미공개) 으로 진행하며, **챌린지별 `Vulnerability tags:`만 힌트로 에이전트에 제공** — `xbow-engineering/validation-benchmarks` 각 챌린지의 `benchmark.yaml` 에 동봉된 메타데이터와 동일합니다. 엔드포인트·파라미터·sink·페이로드·gadget 발견은 에이전트가 직접 수행하며, 태그는 공격 클래스의 탐색 공간만 좁히는 역할을 합니다.
 
 - **[챌린지별 전체 인덱스 · 공격 클래스 매트릭스 · LangSmith 트레이스](benchmark/results/README.md)**
 - **[다른 AI 펜테스트 에이전트와 비교 (Strix · PentestGPT · MAPTA · Cyber-AutoAgent · XBOW 상용 등)](docs/benchmark-comparison.md)**
