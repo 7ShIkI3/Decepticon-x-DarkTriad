@@ -190,7 +190,7 @@ PoCRunner = Callable[[str], Awaitable[tuple[str, str, int]]]
 
 
 def _hash_output(stdout: str, stderr: str, exit_code: int) -> str:
-    h = hashlib.sha1()
+    h = hashlib.sha1(usedforsecurity=False)
     h.update(stdout.encode("utf-8", errors="replace"))
     h.update(b"||")
     h.update(stderr.encode("utf-8", errors="replace"))

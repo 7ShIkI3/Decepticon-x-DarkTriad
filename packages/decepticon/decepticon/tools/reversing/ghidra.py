@@ -113,8 +113,8 @@ class GhidraXref:
 def _mcp_available() -> bool:
     """Check if the Ghidra MCP server is reachable."""
     try:
-        req = Request(f"{GHIDRA_MCP_URL}/mcp/health", method="GET")
-        with urlopen(req, timeout=3) as resp:
+        req = Request(f"{GHIDRA_MCP_URL}/mcp/health", method="GET")  # noqa: S310 # nosec B310 -- hardcoded http URL, not user input
+        with urlopen(req, timeout=3) as resp:  # noqa: S310 # nosec B310
             data = json.loads(resp.read())
             return data.get("status") == "ok"
     except (URLError, OSError, json.JSONDecodeError, KeyError):
@@ -125,17 +125,17 @@ def _mcp_post(endpoint: str, payload: dict[str, Any] | None = None) -> dict[str,
     """POST to the Ghidra MCP bridge and return parsed JSON."""
     url = f"{GHIDRA_MCP_URL}{endpoint}"
     body = json.dumps(payload or {}).encode()
-    req = Request(url, data=body, method="POST")
+    req = Request(url, data=body, method="POST")  # noqa: S310 # nosec B310 -- hardcoded http URL, not user input
     req.add_header("Content-Type", "application/json")
-    with urlopen(req, timeout=60) as resp:
+    with urlopen(req, timeout=60) as resp:  # noqa: S310 # nosec B310
         return json.loads(resp.read())
 
 
 def _mcp_get(endpoint: str) -> dict[str, Any]:
     """GET from the Ghidra MCP bridge."""
     url = f"{GHIDRA_MCP_URL}{endpoint}"
-    req = Request(url, method="GET")
-    with urlopen(req, timeout=60) as resp:
+    req = Request(url, method="GET")  # noqa: S310 # nosec B310 -- hardcoded http URL, not user input
+    with urlopen(req, timeout=60) as resp:  # noqa: S310 # nosec B310
         return json.loads(resp.read())
 
 

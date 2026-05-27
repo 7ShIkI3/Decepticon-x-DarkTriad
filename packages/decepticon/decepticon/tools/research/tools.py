@@ -1105,7 +1105,7 @@ def kg_ingest_httpx_jsonl(path: str, scanner_hint: str = "httpx") -> str:
 def kg_analyze_jwt(token: str, source: str = "") -> str:
     """Parse a JWT and lift suspicious indicators into graph vulnerabilities."""
     parsed = parse_token(token)
-    token_hash = hashlib.sha1(token.encode("utf-8")).hexdigest()[:12]
+    token_hash = hashlib.sha1(token.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
     with graph_transaction() as graph:
         entrypoint: Node | None = None
@@ -1277,7 +1277,9 @@ def kg_analyze_cookie_value(
                 )
 
         created: list[dict[str, Any]] = []
-        cookie_hash = hashlib.sha1(f"{name}:{value}".encode("utf-8")).hexdigest()[:12]
+        cookie_hash = hashlib.sha1(
+            f"{name}:{value}".encode("utf-8"), usedforsecurity=False
+        ).hexdigest()[:12]
         for idx, finding in enumerate(analysis.findings, start=1):
             severity = _cookie_finding_severity(finding)
             vuln = graph.upsert_node(
