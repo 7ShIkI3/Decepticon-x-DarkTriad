@@ -40,10 +40,13 @@ from decepticon.middleware import (
     EngagementContextMiddleware,
     FilesystemMiddleware,
     OPPLANMiddleware,
+    RoEEnforcementMiddleware,
     SkillsMiddleware,
+    UntrustedOutputMiddleware,
 )
 from decepticon.middleware.model_override import ModelOverrideMiddleware
 from decepticon.middleware.notifications import SandboxNotificationMiddleware
+from decepticon.middleware.roe import build_default_sink
 
 # Slot enum + per-role applicability mapping + safety-critical set
 # all live in the contract layer now (decepticon_core.contracts.slots).
@@ -105,6 +108,37 @@ def _make_engagement_context(**_: Any):
     return EngagementContextMiddleware()
 
 
+def _make_roe_enforcement(*, role: str, **_: Any):
+    """Build the RoE enforcement middleware with a per-engagement sink.
+
+    The sink path defaults to ``<workspace>/audit/roe-decisions.jsonl``
+    and is resolved lazily on first tool call (workspace_path is not
+    yet hydrated at slot-build time). Operators can pin a path with
+    ``DECEPTICON_ROE_AUDIT_PATH``.
+    """
+    import os
+
+    sink = build_default_sink(os.environ.get("DECEPTICON_WORKSPACE_PATH"))
+    return RoEEnforcementMiddleware(sink=sink)
+
+
+def _make_untrusted_output(*, role: str, **_: Any):
+    """Build the per-engagement untrusted-output middleware.
+
+    The quarantine ledger path resolves to
+    ``/workspace/audit/untrusted-quarantine.jsonl`` via the bash
+    workspace at runtime - the middleware itself does not need to know
+    the engagement slug at construction time because every call
+    receives ``request.state["workspace_path"]`` already hydrated by
+    EngagementContextMiddleware (which runs immediately before this
+    slot in canonical order).
+    """
+    import os
+
+    ledger = os.environ.get("DECEPTICON_QUARANTINE_LEDGER")
+    return UntrustedOutputMiddleware(quarantine_path=ledger)
+
+
 def _make_skills(*, backend: Any, role: str, skill_sources: list[str] | None = None, **_: Any):
     sources = list(skill_sources) if skill_sources is not None else skills_sources_for(role)
     return SkillsMiddleware(backend=backend, sources=sources)
@@ -164,6 +198,8 @@ SlotFactory = Callable[..., Any]
 
 DEFAULT_SLOT_FACTORIES: dict[MiddlewareSlot, SlotFactory] = {
     MiddlewareSlot.ENGAGEMENT_CONTEXT: _make_engagement_context,
+    MiddlewareSlot.ROE_ENFORCEMENT: _make_roe_enforcement,
+    MiddlewareSlot.UNTRUSTED_OUTPUT: _make_untrusted_output,
     MiddlewareSlot.SKILLS: _make_skills,
     MiddlewareSlot.FILESYSTEM: _make_filesystem,
     MiddlewareSlot.SUBAGENT: _make_subagent,

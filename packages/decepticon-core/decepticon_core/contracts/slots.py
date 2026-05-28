@@ -28,6 +28,8 @@ class MiddlewareSlot(StrEnum):
     """
 
     ENGAGEMENT_CONTEXT = "engagement-context"
+    ROE_ENFORCEMENT = "roe-enforcement"
+    UNTRUSTED_OUTPUT = "untrusted-output"
     SKILLS = "skills"
     FILESYSTEM = "filesystem"
     SUBAGENT = "subagent"
@@ -43,13 +45,28 @@ class MiddlewareSlot(StrEnum):
 SAFETY_CRITICAL_SLOTS: frozenset[MiddlewareSlot] = frozenset(
     {
         # EngagementContextMiddleware carries RoE constraints into every
-        # tool call — disabling it lets an agent target out-of-scope
+        # tool call - disabling it lets an agent target out-of-scope
         # hosts without any guard rail. Replacement is fine if the new
         # middleware honours the same contract; full disable is the
         # actual hazard.
         MiddlewareSlot.ENGAGEMENT_CONTEXT,
+        # RoEEnforcementMiddleware is the legal/safety gate for every
+        # bash tool call. Disabling it lets the agent attempt commands
+        # against out-of-scope targets without record. Replacement is
+        # fine if the new middleware honours the same contract (target
+        # extraction + RoE evaluation + chained audit log).
+        MiddlewareSlot.ROE_ENFORCEMENT,
+        # UntrustedOutputMiddleware structurally separates attacker-
+        # influenceable tool output (bash stdout, file reads, KG
+        # queries) from authoritative instructions via the
+        # <UNTRUSTED_TOOL_OUTPUT> envelope + system policy block.
+        # Disabling it means a hostile HTTP response, banner, or file
+        # content can re-author the agent's instructions for any
+        # downstream model call. Replacement is fine if the new
+        # middleware honours the same contract.
+        MiddlewareSlot.UNTRUSTED_OUTPUT,
         # SandboxNotification tracks background-job completion + emits
-        # the CLI's ``● Background command`` event. Disabling it leaves
+        # the CLI's ``? Background command`` event. Disabling it leaves
         # operator visibility broken on every background tool call.
         MiddlewareSlot.SANDBOX_NOTIFICATION,
     }
@@ -75,10 +92,19 @@ _TAIL_SLOTS: frozenset[MiddlewareSlot] = frozenset(
     }
 )
 
-# Base slots — knowledge + filesystem + tail. Every agent gets these.
+# Base slots — knowledge + filesystem + tail + untrusted-output
+# quarantine. Every agent gets these.
+#
+# UNTRUSTED_OUTPUT is in the base set because *every* agent (including
+# read-only specialists like detector and planning-only agents like
+# soundwave) reads bytes from the workspace, the knowledge graph, or
+# bash stdout. The quarantine envelope is cheap and has no false-
+# positive ceiling — it never blocks, it only annotates.
 _BASE_SLOTS: frozenset[MiddlewareSlot] = _TAIL_SLOTS | {
     MiddlewareSlot.SKILLS,
     MiddlewareSlot.FILESYSTEM,
+    MiddlewareSlot.UNTRUSTED_OUTPUT,
+    MiddlewareSlot.ROE_ENFORCEMENT,
 }
 
 # Standard bash-executing agents (recon/exploit/postexploit/analyst/
@@ -111,6 +137,9 @@ SLOTS_PER_ROLE: dict[str, frozenset[MiddlewareSlot]] = {
     "contract_auditor": _BASH_AGENT_SLOTS,
     "cloud_hunter": _BASH_AGENT_SLOTS,
     "ad_operator": _BASH_AGENT_SLOTS,
+    "phisher": _BASH_AGENT_SLOTS,
+    "mobile_operator": _BASH_AGENT_SLOTS,
+    "wireless_operator": _BASH_AGENT_SLOTS,
     # ── Plugin orchestrator (no EngagementContext per the existing
     # vulnresearch factory — it consumes its parent's context) ──
     "vulnresearch": _BASE_SLOTS | {MiddlewareSlot.SUBAGENT, MiddlewareSlot.OPPLAN},

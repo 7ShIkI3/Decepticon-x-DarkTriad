@@ -6,12 +6,16 @@ from decepticon.middleware.notifications import (
     SandboxNotificationMiddleware,
 )
 from decepticon.middleware.opplan import OPPLANMiddleware
+from decepticon.middleware.roe import RoEEnforcementMiddleware
 from decepticon.middleware.skills import SkillsMiddleware
+from decepticon.middleware.untrusted_output import UntrustedOutputMiddleware
 
 __all__ = [
     "EngagementContextMiddleware",
     "FilesystemMiddleware",
     "OPPLANMiddleware",
+    "RoEEnforcementMiddleware",
     "SandboxNotificationMiddleware",
     "SkillsMiddleware",
+    "UntrustedOutputMiddleware",
 ]

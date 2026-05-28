@@ -107,9 +107,45 @@ services:
       NEO4J_server_memory_pagecache_size: 64m
 
       NEO4J_PLUGINS: '["apoc"]'
-      NEO4J_dbms_security_procedures_unrestricted: apoc.*
-      NEO4J_apoc_export_file_enabled: "true"
-      NEO4J_apoc_import_file_enabled: "true"
+      # ──────────────────────────────────────────────────────────────────
+      # APOC hardening - see docs/security/neo4j-hardening.md.
+      #
+      # PRIOR CONFIG (REMOVED, do NOT re-add):
+      #   NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      #   NEO4J_apoc_export_file_enabled: "true"
+      #   NEO4J_apoc_import_file_enabled: "true"
+      #
+      # Neo4j is dual-homed across sandbox-net AND decepticon-net to let
+      # the orchestrator on management read findings written from inside
+      # the sandbox. Allowing arbitrary APOC procedures - especially the
+      # file-I/O family - turns that bridge into a sandbox→management
+      # pivot path: a prompt-injection-driven Cypher payload can issue
+      #   CALL apoc.cypher.runFile('file:///proc/self/environ')
+      # or
+      #   CALL apoc.export.csv.query(..., 'file:///root/.config/...')
+      # and exfiltrate management-plane secrets.
+      #
+      # The new posture is allowlist-only. File-I/O, cross-database, and
+      # trigger procedures are unreachable from Cypher. Safe query
+      # builders (collection / text / path / merge / refactor / periodic)
+      # remain available for the kg_add_node / kg_add_edge tool surface.
+      NEO4J_dbms_security_procedures_allowlist: >-
+        apoc.coll.*,apoc.text.*,apoc.path.*,apoc.create.*,
+        apoc.merge.*,apoc.refactor.*,apoc.periodic.iterate,
+        apoc.lock.*,apoc.case,apoc.do.case,apoc.do.when,apoc.when,
+        apoc.help,apoc.version,apoc.diff.*,apoc.label.*,
+        apoc.node.*,apoc.nodes.*,apoc.rel.*,apoc.util.*
+      # Strict config validation - refuse to boot on unknown / misspelled
+      # config keys so accidental re-introduction of `_unrestricted`
+      # under a typo (e.g. `unrestriced`) cannot silently re-open the
+      # sandbox→management bridge.
+      NEO4J_server_config_strict__validation_enabled: "true"
+      # Lock HTTP API access to localhost (the orchestrator talks to
+      # Neo4j over Bolt, not HTTP). The web dashboard's Neo4j browser
+      # binding lives on 127.0.0.1 below; this disables the HTTP API for
+      # any other origin.
+      NEO4J_server_http_listen__address: "0.0.0.0:7474"
+      NEO4J_dbms_security_http__access__control__allow__origin: ""
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
@@ -147,10 +183,44 @@ services:
     container_name: decepticon${DECEPTICON_STACK_NAME:+-${DECEPTICON_STACK_NAME}}-sandbox
     networks:
       - sandbox-net
+    # ──────────────────────────────────────────────────────────────────
+    # Sandbox hardening - see docs/security/sandbox-isolation.md.
+    #
+    # The Kali sandbox runs root inside the container because raw sockets
+    # (nmap SYN scans, packet capture) require root and the container
+    # boundary IS the security boundary, not the user boundary. To keep
+    # that boundary tight:
+    #
+    #   - cap_drop ALL, then re-add the minimum set the offensive
+    #     toolset actually needs (NET_RAW for SYN scans, NET_ADMIN for
+    #     raw routing, NET_BIND_SERVICE for low ports, SYS_PTRACE for
+    #     frida/gdb in the Reverser path, SETUID/SETGID for tools like
+    #     msfconsole that drop privileges internally).
+    #   - no-new-privileges blocks setuid escalation within the
+    #     container even if a tool ships with a setuid binary.
+    #   - mem_limit caps a runaway scan / fuzzer at 4G so it can't
+    #     starve the management plane.
+    #   - pids_limit was already 1024; kept.
+    #   - read_only: NOT set. The Kali toolset writes to /tmp, /var,
+    #     /root, /workspace. A read_only root with tmpfs everywhere
+    #     would break ~30 tools. Per-engagement container isolation
+    #     (sandbox-isolation.md) is the right structural fix.
+    cap_drop:
+      - ALL
     cap_add:
       - NET_RAW
       - NET_ADMIN
       - NET_BIND_SERVICE
+      - SYS_PTRACE
+      - SETUID
+      - SETGID
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - KILL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 4g
     environment:
       # SANDBOX_DAEMON=1 makes containers/sandbox-entrypoint.sh run the
       # FastAPI daemon on port 9999 instead of the legacy

@@ -416,10 +416,13 @@ AGENT_TIERS: dict[str, Tier] = {
     "ad_operator": Tier.MID,
     "cloud_hunter": Tier.MID,
     "reverser": Tier.MID,
+    "phisher": Tier.MID,
+    "mobile_operator": Tier.MID,
     # LOW — high-throughput, low reasoning depth. Recon / triage / docs.
     "soundwave": Tier.LOW,
     "recon": Tier.LOW,
     "scanner": Tier.LOW,
+    "wireless_operator": Tier.LOW,
 }
 
 AGENT_TEMPERATURES: dict[str, float] = {
@@ -439,6 +442,9 @@ AGENT_TEMPERATURES: dict[str, float] = {
     "scanner": 0.2,
     "vulnresearch": 0.4,
     "recon": 0.3,
+    "phisher": 0.4,
+    "mobile_operator": 0.2,
+    "wireless_operator": 0.2,
 }
 
 

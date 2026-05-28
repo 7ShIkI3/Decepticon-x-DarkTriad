@@ -13,10 +13,13 @@ from decepticon.agents.standard.cloud_hunter import create_cloud_hunter_agent
 from decepticon.agents.standard.contract_auditor import create_contract_auditor_agent
 from decepticon.agents.standard.decepticon import create_decepticon_agent
 from decepticon.agents.standard.exploit import create_exploit_agent
+from decepticon.agents.standard.mobile_operator import create_mobile_operator_agent
+from decepticon.agents.standard.phisher import create_phisher_agent
 from decepticon.agents.standard.postexploit import create_postexploit_agent
 from decepticon.agents.standard.recon import create_recon_agent
 from decepticon.agents.standard.reverser import create_reverser_agent
 from decepticon.agents.standard.soundwave import create_soundwave_agent
+from decepticon.agents.standard.wireless_operator import create_wireless_operator_agent
 
 __all__ = [
     "create_recon_agent",
@@ -29,6 +32,9 @@ __all__ = [
     "create_contract_auditor_agent",
     "create_cloud_hunter_agent",
     "create_ad_operator_agent",
+    "create_phisher_agent",
+    "create_mobile_operator_agent",
+    "create_wireless_operator_agent",
     # Vulnresearch pipeline (five-stage modular)
     "create_scanner_agent",
     "create_detector_agent",

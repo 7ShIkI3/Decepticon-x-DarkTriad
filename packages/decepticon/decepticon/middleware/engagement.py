@@ -36,6 +36,7 @@ from typing_extensions import override
 
 from decepticon.middleware.opplan import _reduce_engagement_name, _reduce_workspace_path
 from decepticon.tools.bash.bash import bash_workspace
+from decepticon.tools.research._engagement_scope import set_active_engagement
 
 
 class EngagementContextState(AgentState):
@@ -99,15 +100,22 @@ def _hydrate_engagement_state(state: Any) -> dict[str, Any] | None:
     downstream middleware (OPPLAN, filesystem) reads them. Idempotent: if the
     state already carries either field, it is left untouched and the config
     value is ignored.
+
+    Also propagates the engagement label into the per-context
+    ``_active_engagement`` so Neo4j writes through
+    ``decepticon.tools.research.neo4j_store`` auto-tag with the right
+    engagement (see ``docs/security/neo4j-hardening.md``).
     """
     get = state.get if hasattr(state, "get") else (lambda _k, _d=None: None)
     configurable = _configurable_from_runnable_config()
     updates: dict[str, Any] = {}
 
-    if not get("engagement_name"):
+    engagement_label: str | None = get("engagement_name")
+    if not engagement_label:
         cfg_slug = configurable.get("engagement_name")
         if isinstance(cfg_slug, str) and cfg_slug:
             updates["engagement_name"] = cfg_slug
+            engagement_label = cfg_slug
 
     if not get("workspace_path"):
         cfg_workspace = configurable.get("workspace_path")
@@ -118,6 +126,16 @@ def _hydrate_engagement_state(state: Any) -> dict[str, Any] | None:
         cfg_lang = configurable.get("language")
         if isinstance(cfg_lang, str) and cfg_lang:
             updates["language"] = cfg_lang
+
+    if engagement_label:
+        try:
+            set_active_engagement(engagement_label)
+        except ValueError:
+            # Invalid engagement label format (e.g. contains slashes or
+            # control chars). The contextvar stays unset; downstream
+            # Neo4j writes will hit the explicit no-engagement guard and
+            # fail loud rather than silently writing to the global scope.
+            pass
 
     return updates or None
 

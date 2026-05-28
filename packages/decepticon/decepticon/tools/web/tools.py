@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from langchain_core.tools import tool
@@ -159,7 +160,9 @@ _session: HTTPSession | None = None
 def _get_session() -> HTTPSession:
     global _session
     if _session is None:
-        _session = HTTPSession(verify=False)  # Red-team default: skip TLS verify
+        verify_env = os.environ.get("DECEPTICON_HTTP_VERIFY_TLS", "").strip().lower()
+        verify_tls = verify_env in {"1", "true", "yes", "on"}
+        _session = HTTPSession(verify=verify_tls)
     return _session
 
 

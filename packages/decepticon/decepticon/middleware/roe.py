@@ -1,0 +1,266 @@
+"""RoE enforcement middleware - the authoritative ROE pass/refuse gate.
+
+This middleware sits between the LLM and the tool surface. Every
+``bash`` (and other tool) call is evaluated against the engagement's
+``roe.json:machine_enforcement`` block. The outcome is one of:
+
+  * **PASS** in audit mode - logged, allowed to proceed.
+  * **WARN** in warn mode - logged, a SystemMessage is appended to the
+    tool's return so the model sees it failed RoE, but the call still
+    executes.
+  * **REFUSE** in enforce mode - logged, the tool call short-circuits
+    with a ``[ROE_REFUSED]`` ToolMessage. No bytes leave the sandbox.
+
+Every decision (PASS too, not just REFUSE) lands in the HMAC-chained
+audit ledger via :class:`RoEAuditSink`. The ledger is the legal record
+of "what the agent tried, what was approved, what was blocked" - the
+key artifact for paid / regulated engagement out-briefs.
+
+Reading the RoE:
+
+  * Default location: ``<workspace>/plan/roe.json``.
+  * Resolved per-iteration from ``state["workspace_path"]`` so the
+    middleware can hot-reload an operator-edited RoE without restart.
+  * ``machine_enforcement`` block is optional - when absent, the
+    middleware logs every tool call but never blocks (``mode=audit``).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import time
+from pathlib import Path
+from typing import Any
+
+from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import ToolMessage
+from langgraph.types import Command
+from typing_extensions import override
+
+from decepticon.middleware._audit_sink import RoEAuditSink
+from decepticon.middleware._command_targets import extract_targets
+from decepticon_core.types.roe import (
+    Decision,
+    EnforcementMode,
+    MachineEnforcement,
+    evaluate_command,
+    evaluate_target,
+)
+
+log = logging.getLogger(__name__)
+
+
+GATED_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "bash",
+        "bash_output",
+        "bash_kill",
+    }
+)
+
+
+def _load_rules_for_workspace(workspace_path: str | None) -> MachineEnforcement:
+    if not workspace_path:
+        return MachineEnforcement()
+    roe_path = Path(workspace_path) / "plan" / "roe.json"
+    if not roe_path.exists():
+        return MachineEnforcement()
+    try:
+        data = json.loads(roe_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("roe: failed to read %s: %s; defaulting to audit-only mode", roe_path, exc)
+        return MachineEnforcement()
+    block = data.get("machine_enforcement") if isinstance(data, dict) else None
+    return MachineEnforcement.from_dict(block)
+
+
+def _refused_message(decision: Decision, tool_name: str, tool_call_id: str | None) -> ToolMessage:
+    body = (
+        f"[ROE_REFUSED] code={decision.reason_code} tool={tool_name}\n"
+        f"reason: {decision.reason_detail}\n\n"
+        "The engagement's RoE blocked this call. If you believe this is a\n"
+        "false positive, ask the operator to update plan/roe.json "
+        "(machine_enforcement block) and re-run the objective. Continuing\n"
+        "with a different target / different technique is the expected\n"
+        "response - do NOT re-issue the same command this turn."
+    )
+    return ToolMessage(content=body, tool_call_id=tool_call_id or "", status="error")
+
+
+def _warn_message(decision: Decision, tool_message: ToolMessage) -> ToolMessage:
+    body = (
+        f"[ROE_WARN] code={decision.reason_code}\n"
+        f"reason: {decision.reason_detail}\n\n"
+        "The tool call ran, but the RoE evaluator flagged it. Review the\n"
+        "operator's intent before continuing.\n\n"
+        "----- ORIGINAL TOOL OUTPUT -----\n"
+        f"{_to_text(tool_message.content)}"
+    )
+    return ToolMessage(
+        content=body,
+        tool_call_id=tool_message.tool_call_id,
+        status=tool_message.status,
+        name=tool_message.name,
+    )
+
+
+def _to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                chunks.append(item)
+            elif isinstance(item, dict) and item.get("type") == "text":
+                chunks.append(str(item.get("text", "")))
+        return "".join(chunks)
+    return str(content)
+
+
+def _command_from_tool_call(request) -> str:
+    args = getattr(request, "tool_call_args", None)
+    if not isinstance(args, dict):
+        last = getattr(request, "tool_call", None)
+        args = getattr(last, "args", None) if last else None
+    if not isinstance(args, dict):
+        return ""
+    cmd = args.get("command") or args.get("cmd") or ""
+    return cmd if isinstance(cmd, str) else ""
+
+
+class RoEEnforcementMiddleware(AgentMiddleware):
+    """Evaluate every bash tool call against the engagement's RoE.
+
+    Args:
+        sink: ``RoEAuditSink`` instance. The middleware records every
+            evaluation (PASS, WARN, REFUSE) so the engagement deliverable
+            carries the full record.
+        gated_tools: Override the default tool-name set. Use this to
+            extend enforcement to additional tools (e.g. an HTTP
+            request tool).
+    """
+
+    def __init__(
+        self,
+        *,
+        sink: RoEAuditSink | None = None,
+        gated_tools: frozenset[str] | None = None,
+    ) -> None:
+        super().__init__()
+        self._sink = sink
+        self._gated = gated_tools or GATED_TOOL_NAMES
+
+    @override
+    def wrap_tool_call(self, request, handler) -> ToolMessage | Command:
+        return self._dispatch_sync(request, handler)
+
+    @override
+    async def awrap_tool_call(self, request, handler) -> ToolMessage | Command:
+        return await self._dispatch_async(request, handler)
+
+    def _dispatch_sync(self, request, handler):
+        decision, rules, tool_name = self._evaluate(request)
+        self._record(request, tool_name, decision, rules.mode)
+        if not decision.allow and rules.mode == EnforcementMode.ENFORCE:
+            return _refused_message(decision, tool_name, _tcid(request))
+        result = handler(request)
+        if (
+            not decision.allow
+            and rules.mode == EnforcementMode.WARN
+            and isinstance(result, ToolMessage)
+        ):
+            return _warn_message(decision, result)
+        return result
+
+    async def _dispatch_async(self, request, handler):
+        decision, rules, tool_name = self._evaluate(request)
+        self._record(request, tool_name, decision, rules.mode)
+        if not decision.allow and rules.mode == EnforcementMode.ENFORCE:
+            return _refused_message(decision, tool_name, _tcid(request))
+        result = await handler(request)
+        if (
+            not decision.allow
+            and rules.mode == EnforcementMode.WARN
+            and isinstance(result, ToolMessage)
+        ):
+            return _warn_message(decision, result)
+        return result
+
+    def _evaluate(self, request) -> tuple[Decision, MachineEnforcement, str]:
+        tool = getattr(request, "tool", None)
+        tool_name = getattr(tool, "name", "unknown") if tool else "unknown"
+        if tool_name not in self._gated:
+            return Decision.allow_default(), MachineEnforcement(), tool_name
+        state = getattr(request, "state", {}) or {}
+        get = state.get if hasattr(state, "get") else (lambda _k, _d=None: None)
+        workspace = get("workspace_path") or None
+        rules = _load_rules_for_workspace(workspace)
+        command = _command_from_tool_call(request)
+        cmd_decision = evaluate_command(command, rules)
+        if not cmd_decision.allow:
+            return cmd_decision, rules, tool_name
+        targets = extract_targets(command)
+        for target in sorted(targets):
+            target_decision = evaluate_target(target, rules)
+            if not target_decision.allow:
+                return target_decision, rules, tool_name
+        return Decision.allow_default(), rules, tool_name
+
+    def _record(
+        self,
+        request,
+        tool_name: str,
+        decision: Decision,
+        mode: EnforcementMode,
+    ) -> None:
+        if self._sink is None:
+            return
+        state = getattr(request, "state", {}) or {}
+        get = state.get if hasattr(state, "get") else (lambda _k, _d=None: None)
+        engagement = get("engagement_name") or "unknown-engagement"
+        objective = get("active_objective_id") or get("current_objective") or ""
+        record = {
+            "ts": time.time(),
+            "engagement": engagement,
+            "objective_id": objective,
+            "tool": tool_name,
+            "decision": "allow" if decision.allow else "refuse",
+            "reason_code": decision.reason_code,
+            "reason_detail": decision.reason_detail,
+            "risk": decision.risk,
+            "matched_targets": list(decision.matched_targets),
+            "mode": mode.value,
+            "command_excerpt": _command_from_tool_call(request)[:512],
+        }
+        try:
+            self._sink.append(record)
+        except Exception as exc:  # noqa: BLE001 - audit must never break tool execution
+            log.error("roe: audit sink write failed: %s", exc)
+
+
+def _tcid(request) -> str | None:
+    tc = getattr(request, "tool_call_id", None)
+    if isinstance(tc, str):
+        return tc
+    last = getattr(request, "tool_call", None)
+    tc_attr = getattr(last, "id", None) if last else None
+    return tc_attr if isinstance(tc_attr, str) else None
+
+
+def build_default_sink(workspace_path: str | None) -> RoEAuditSink | None:
+    """Best-effort default sink path: ``<workspace>/audit/roe-decisions.jsonl``.
+
+    Returns ``None`` when no workspace is set yet (during initial
+    bootstrapping) so the middleware degrades to "no-sink" cleanly.
+    Operators that want a deterministic path can also set
+    ``DECEPTICON_ROE_AUDIT_PATH`` in the env.
+    """
+    env_path = os.environ.get("DECEPTICON_ROE_AUDIT_PATH")
+    if env_path:
+        return RoEAuditSink(path=Path(env_path))
+    if not workspace_path:
+        return None
+    return RoEAuditSink(path=Path(workspace_path) / "audit" / "roe-decisions.jsonl")

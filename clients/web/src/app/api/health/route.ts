@@ -2,9 +2,13 @@ import { NextResponse } from "next/server";
 
 const LANGGRAPH_URL = process.env.LANGGRAPH_API_URL ?? "http://langgraph:2024";
 const LITELLM_URL = process.env.LITELLM_URL ?? "http://litellm:4000";
-const LITELLM_KEY = process.env.LITELLM_API_KEY ?? "sk-decepticon-master";
+// LITELLM_API_KEY: no fallback to the documented public default. Health
+// endpoints that probe LiteLLM with the public key effectively bypass
+// any deployment-specific auth and report a false-positive "ok" against
+// a misconfigured stack. Require the env var to be set; otherwise the
+// LiteLLM check reports degraded.
+const LITELLM_KEY = process.env.LITELLM_API_KEY ?? "";
 const NEO4J_HTTP_URL = process.env.NEO4J_HTTP_URL ?? "http://neo4j:7474";
-
 
 interface ServiceHealth {
   name: string;
@@ -36,13 +40,47 @@ async function checkService(
   }
 }
 
-export async function GET() {
-  const [langgraph, litellm, neo4j] = await Promise.all([
-    checkService("langgraph", `${LANGGRAPH_URL}/info`),
-    checkService("litellm", `${LITELLM_URL}/v1/models`, { Authorization: `Bearer ${LITELLM_KEY}` }),
-    checkService("neo4j", `${NEO4J_HTTP_URL}/`),
-  ]);
+async function checkPostgres(): Promise<ServiceHealth> {
+  // Actually probe Postgres rather than always returning ok. Reuses the
+  // app's prisma client so we exercise the same connection pool the rest
+  // of the API uses.
+  const start = Date.now();
+  try {
+    const { prisma } = await import("@/lib/prisma");
+    await prisma.$queryRaw`SELECT 1`;
+    return {
+      name: "postgres",
+      status: "ok",
+      detail: "connected",
+      latencyMs: Date.now() - start,
+    };
+  } catch (err) {
+    return {
+      name: "postgres",
+      status: "error",
+      detail: err instanceof Error ? err.message : "Unreachable",
+      latencyMs: Date.now() - start,
+    };
+  }
+}
 
+export async function GET() {
+  const litellmHeaders: Record<string, string> = LITELLM_KEY
+    ? { Authorization: `Bearer ${LITELLM_KEY}` }
+    : {};
+
+  const [langgraph, litellm, neo4j, postgres] = await Promise.all([
+    checkService("langgraph", `${LANGGRAPH_URL}/info`),
+    LITELLM_KEY
+      ? checkService("litellm", `${LITELLM_URL}/v1/models`, litellmHeaders)
+      : Promise.resolve<ServiceHealth>({
+          name: "litellm",
+          status: "error",
+          detail: "LITELLM_API_KEY not configured",
+        }),
+    checkService("neo4j", `${NEO4J_HTTP_URL}/`),
+    checkPostgres(),
+  ]);
 
   // Extract model count from litellm response
   let modelCount = 0;
@@ -56,13 +94,7 @@ export async function GET() {
     }
   }
 
-  const services: ServiceHealth[] = [
-    langgraph,
-    litellm,
-    neo4j,
-    { name: "postgres", status: "ok", detail: "Connected (Prisma ORM)" },
-  ];
-
+  const services: ServiceHealth[] = [langgraph, litellm, neo4j, postgres];
   const allOk = services.every((s) => s.status === "ok");
 
   return NextResponse.json({
