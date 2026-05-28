@@ -1,0 +1,8 @@
+node_modules/
+.venv/
+dist/
+build/
+.next/
+**/CHANGELOG.md
+clients/web/public/
+packages/decepticon/decepticon/skills/standard/decepticon/engagement-bundle/

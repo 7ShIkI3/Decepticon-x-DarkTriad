@@ -303,7 +303,8 @@ async def _offload_large_output(
     - Agent can use read_file or grep to access specific parts later
     """
     sandbox = get_sandbox()
-    assert sandbox is not None
+    if sandbox is None:
+        raise RuntimeError("bash tool invoked without a sandbox set in the contextvar")
 
     if workspace_path == "/workspace":
         head_preview = output[:2000].strip()
@@ -320,7 +321,7 @@ async def _offload_large_output(
 
     # Generate unique filename
     ts = int(time.time())
-    cmd_hash = hashlib.md5(command.encode()).hexdigest()[:6]
+    cmd_hash = hashlib.md5(command.encode(), usedforsecurity=False).hexdigest()[:6]
     filename = f"{workspace_path}/.scratch/{session}_{ts}_{cmd_hash}.txt"
 
     # Write via upload_files (docker cp) to avoid shell injection from output content

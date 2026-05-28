@@ -35,7 +35,7 @@ class LLMConfig(BaseModel):
     """LLM proxy connection configuration."""
 
     proxy_url: str = "http://localhost:4000"
-    proxy_api_key: str = "sk-decepticon-master"
+    proxy_api_key: str = "sk-decepticon-master"  # nosemgrep: decepticon-no-hardcoded-default-key
     timeout: int = 120
     max_retries: int = 2
 

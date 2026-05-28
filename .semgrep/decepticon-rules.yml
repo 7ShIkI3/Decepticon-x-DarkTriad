@@ -1,0 +1,112 @@
+rules:
+  # ─── Sandbox isolation invariants ────────────────────────────────────
+  - id: decepticon-no-shell-true-outside-sandbox
+    severity: ERROR
+    message: |
+      subprocess with shell=True outside sandbox_kernel/ is a command-injection
+      vector. The sandbox kernel is the only allowlisted home for shell=True;
+      every other Python file that wants to invoke a subcommand must build the
+      argv list explicitly.
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.run(..., shell=True, ...)
+          - pattern: subprocess.call(..., shell=True, ...)
+          - pattern: subprocess.check_output(..., shell=True, ...)
+          - pattern: subprocess.check_call(..., shell=True, ...)
+          - pattern: subprocess.Popen(..., shell=True, ...)
+          - pattern: os.system(...)
+          - pattern: os.popen(...)
+    paths:
+      exclude:
+        - "**/sandbox_kernel/**"
+        - "**/tests/**"
+
+  # ─── Type-safety escape hatches ──────────────────────────────────────
+  - id: decepticon-no-blanket-type-ignore
+    severity: WARNING
+    message: |
+      Bare `# type: ignore` or `# pyright: ignore` without a rule code disables
+      every check on the line. Use scoped suppressions:
+        # type: ignore[<error-code>]   OR   # pyright: ignore[reportXxx]
+      so unrelated future errors on the line still surface.
+    languages: [python]
+    patterns:
+      - pattern-regex: '#\s*(type:\s*ignore|pyright:\s*ignore)(?![\[(])'
+    paths:
+      exclude:
+        - "**/tests/**"
+
+  # ─── Cryptographic agility ───────────────────────────────────────────
+  - id: decepticon-no-weak-hash
+    severity: WARNING
+    message: |
+      MD5 and SHA-1 are broken for cryptographic use. If you need a non-crypto
+      content hash (e.g. cache keys), pass `usedforsecurity=False` explicitly so
+      the intent is documented at the call site.
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.md5(...)
+          - pattern: hashlib.sha1(...)
+      - pattern-not: hashlib.md5(..., usedforsecurity=False)
+      - pattern-not: hashlib.sha1(..., usedforsecurity=False)
+
+  # ─── HTTP request hygiene ────────────────────────────────────────────
+  - id: decepticon-no-verify-false
+    severity: ERROR
+    message: |
+      Passing verify=False to requests/httpx disables TLS certificate
+      verification, which CWE-295 (improper certificate validation). The
+      sandbox MAY need this for self-signed targets — in which case it must
+      go through `decepticon.tools.web` with the engagement RoE attached.
+    languages: [python]
+    patterns:
+      - pattern-either:
+          - pattern: requests.$METHOD(..., verify=False, ...)
+          - pattern: httpx.$METHOD(..., verify=False, ...)
+          - pattern: requests.Session(...).$METHOD(..., verify=False, ...)
+          - pattern: httpx.Client(..., verify=False, ...)
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/decepticon/tools/web/**"
+        - "**/decepticon/tools/proxy/**"
+
+  # ─── No raw API keys in the repo ─────────────────────────────────────
+  - id: decepticon-no-hardcoded-default-key
+    severity: ERROR
+    message: |
+      The LiteLLM publicly-documented default key `sk-decepticon-master` must
+      not be a fallback. Any code that reads LITELLM_API_KEY must fail loud if
+      it's unset, never quietly accept the public key.
+    languages: [python, ts, javascript]
+    patterns:
+      - pattern-regex: 'sk-decepticon-master'
+      - pattern-not-regex: 'nosemgrep: decepticon-no-hardcoded-default-key'
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "benchmark/**"
+        - ".env.example"
+        - "**/litellm_startup.py"
+
+  # ─── No assert in production code ────────────────────────────────────
+  - id: decepticon-no-assert-in-prod
+    severity: WARNING
+    message: |
+      Python -O strips assertions. Production code that relies on assert for
+      validation will behave differently under PYTHONOPTIMIZE=1. Use explicit
+      `if ... raise ValueError(...)` for runtime contract checks.
+    languages: [python]
+    patterns:
+      - pattern: assert $X
+    paths:
+      include:
+        - "**/decepticon/middleware/**"
+        - "**/decepticon/tools/**"
+        - "**/decepticon/sandbox_kernel/**"
+        - "**/decepticon/sandbox_server/**"
+        - "**/decepticon/runtime/**"
+      exclude:
+        - "**/tests/**"

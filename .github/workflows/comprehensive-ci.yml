@@ -1,0 +1,568 @@
+name: Comprehensive CI
+
+concurrency:
+  group: comprehensive-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+  actions: read
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.f.outputs.python }}
+      go: ${{ steps.f.outputs.go }}
+      ts: ${{ steps.f.outputs.ts }}
+      docker: ${{ steps.f.outputs.docker }}
+      shell: ${{ steps.f.outputs.shell }}
+      yaml: ${{ steps.f.outputs.yaml }}
+      markdown: ${{ steps.f.outputs.markdown }}
+      actions: ${{ steps.f.outputs.actions }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            python:
+              - 'packages/**/*.py'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.semgrep/**'
+              - '.github/workflows/comprehensive-ci.yml'
+            go:
+              - 'clients/launcher/**'
+              - '.golangci.yml'
+              - '.github/workflows/comprehensive-ci.yml'
+            ts:
+              - 'clients/**/*.ts'
+              - 'clients/**/*.tsx'
+              - 'clients/**/*.js'
+              - 'package*.json'
+              - '.github/workflows/comprehensive-ci.yml'
+            docker:
+              - 'containers/**.Dockerfile'
+              - 'docker-compose*.yml'
+              - '.hadolint.yaml'
+              - '.github/workflows/comprehensive-ci.yml'
+            shell:
+              - '**.sh'
+              - 'containers/*-entrypoint.sh'
+              - '.shellcheckrc'
+              - '.github/workflows/comprehensive-ci.yml'
+            yaml:
+              - '**.yml'
+              - '**.yaml'
+              - '.yamllint.yaml'
+            markdown:
+              - '**.md'
+              - '.markdownlint.yaml'
+            actions:
+              - '.github/workflows/**'
+
+  semgrep-custom:
+    name: Semgrep (custom Decepticon rules — hard gate)
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.ts == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Custom Decepticon rules (blocking)
+        run: |
+          semgrep scan \
+            --error \
+            --metrics=off \
+            --severity=ERROR \
+            --sarif --sarif-output=semgrep-custom.sarif \
+            --config=.semgrep/decepticon-rules.yml \
+            --exclude=node_modules --exclude=.venv --exclude=dist --exclude=build \
+            --exclude=benchmark/xbow-validation-benchmarks \
+            --exclude=benchmark/MHBench
+      - name: Upload custom Semgrep SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-custom.sarif
+          category: semgrep-custom
+
+  semgrep-public:
+    name: Semgrep (public rule packs — informational)
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.ts == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Public rule packs (report only)
+        continue-on-error: true
+        run: |
+          semgrep scan \
+            --metrics=off \
+            --sarif --sarif-output=semgrep-public.sarif \
+            --config=p/python \
+            --config=p/typescript \
+            --config=p/dockerfile \
+            --config=p/security-audit \
+            --config=p/owasp-top-ten \
+            --config=p/jwt \
+            --config=p/insecure-transport \
+            --config=p/command-injection \
+            --config=p/cwe-top-25 \
+            --exclude=node_modules --exclude=.venv --exclude=dist --exclude=build \
+            --exclude=benchmark/xbow-validation-benchmarks \
+            --exclude=benchmark/MHBench || true
+          [ -f semgrep-public.sarif ] || echo '{"version":"2.1.0","$schema":"https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json","runs":[{"tool":{"driver":{"name":"semgrep","rules":[]}},"results":[]}]}' > semgrep-public.sarif
+      - name: Upload public-pack Semgrep SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-public.sarif
+          category: semgrep-public
+
+  bandit:
+    name: Bandit (Python security)
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.15"
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install bandit
+        run: uv tool install "bandit[toml,sarif]"
+      - name: Run bandit
+        run: |
+          uv tool run bandit \
+            -r packages/decepticon packages/decepticon-core packages/decepticon-sdk \
+            -c pyproject.toml \
+            -f sarif -o bandit.sarif \
+            --severity-level medium \
+            --confidence-level medium || EC=$?
+          exit ${EC:-0}
+      - name: Upload Bandit SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+  mypy:
+    name: mypy (type-check second opinion)
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.15"
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --group dev --group lint --locked
+      - name: Run mypy
+        run: uv run mypy --no-error-summary 2>&1 | tee mypy.txt || true
+      - name: Upload mypy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mypy-${{ github.run_id }}
+          path: mypy.txt
+          retention-days: 7
+
+  python-quality:
+    name: Python quality (deptry + vulture + refurb + radon)
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.8.15"
+          enable-cache: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --group dev --group lint --locked
+      - name: deptry (dependency hygiene)
+        run: uv run deptry . || true
+      - name: vulture (dead code, info only)
+        run: uv run vulture --min-confidence 90 2>&1 | tee vulture.txt || true
+      - name: refurb (modernization, info only)
+        run: uv run refurb packages/ 2>&1 | tee refurb.txt || true
+      - name: Cyclomatic complexity (xenon hard-gate)
+        run: |
+          uv run xenon \
+            --max-absolute F \
+            --max-modules C \
+            --max-average B \
+            packages/decepticon \
+            packages/decepticon-core \
+            packages/decepticon-sdk
+      - name: Upload quality reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-quality-${{ github.run_id }}
+          path: |
+            vulture.txt
+            refurb.txt
+          retention-days: 7
+
+  osv-scanner:
+    name: OSV-Scanner (broader vuln DB)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run OSV-Scanner
+        uses: google/osv-scanner-action/osv-scanner-action@v2.0.2
+        with:
+          scan-args: |-
+            --recursive
+            --skip-git
+            --format=sarif
+            --output=osv.sarif
+            ./
+        continue-on-error: true
+      - name: Ensure SARIF exists even on no-findings
+        if: always()
+        run: |
+          if [ ! -f osv.sarif ]; then
+            cat > osv.sarif <<'EOF'
+          {
+            "version": "2.1.0",
+            "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json",
+            "runs": [
+              {
+                "tool": {"driver": {"name": "osv-scanner", "rules": []}},
+                "results": []
+              }
+            ]
+          }
+          EOF
+          fi
+      - name: Upload OSV SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: osv.sarif
+          category: osv-scanner
+
+  trufflehog:
+    name: TruffleHog (verified secret scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: TruffleHog OSS
+        uses: trufflesecurity/trufflehog@v3.82.13
+        with:
+          path: ./
+          base: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+          head: ${{ github.event.pull_request.head.sha || github.sha }}
+          extra_args: --only-verified
+
+  hadolint:
+    name: Hadolint (Dockerfiles)
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - langgraph
+          - litellm
+          - sandbox
+          - cli
+          - web
+          - c2-sliver
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: containers/${{ matrix.dockerfile }}.Dockerfile
+          config: .hadolint.yaml
+          format: sarif
+          output-file: hadolint-${{ matrix.dockerfile }}.sarif
+          no-fail: true
+      - name: Upload Hadolint SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: hadolint-${{ matrix.dockerfile }}.sarif
+          category: hadolint-${{ matrix.dockerfile }}
+
+  shellcheck:
+    name: ShellCheck (entrypoints + scripts)
+    needs: changes
+    if: needs.changes.outputs.shell == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          severity: warning
+          scandir: '.'
+          additional_files: 'scripts/install.sh'
+          ignore_paths: 'node_modules .venv'
+          format: gcc
+          check_together: 'yes'
+
+  trivy-fs:
+    name: Trivy (filesystem + config)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          exit-code: "0"
+      - name: Trivy config scan
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: sarif
+          output: trivy-config.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: "0"
+      - name: Upload Trivy fs SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+      - name: Upload Trivy config SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config
+
+  checkov:
+    name: Checkov (IaC misconfig)
+    needs: changes
+    if: needs.changes.outputs.docker == 'true' || needs.changes.outputs.yaml == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          quiet: true
+          soft_fail: true
+          framework: dockerfile,github_actions,secrets
+          output_format: sarif
+          output_file_path: checkov-output
+          skip_path: node_modules,.venv,benchmark/xbow-validation-benchmarks,benchmark/MHBench
+      - name: Locate Checkov SARIF
+        if: always()
+        run: |
+          set -e
+          if [ -f checkov-output/results_sarif.sarif ]; then
+            cp checkov-output/results_sarif.sarif checkov.sarif
+          elif [ -f results_sarif.sarif ]; then
+            cp results_sarif.sarif checkov.sarif
+          else
+            cat > checkov.sarif <<'EOF'
+          {
+            "version": "2.1.0",
+            "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/os/schemas/sarif-schema-2.1.0.json",
+            "runs": [
+              {"tool": {"driver": {"name": "checkov", "rules": []}}, "results": []}
+            ]
+          }
+          EOF
+          fi
+          ls -la checkov.sarif
+      - name: Upload Checkov SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+  yamllint:
+    name: yamllint
+    needs: changes
+    if: needs.changes.outputs.yaml == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install yamllint
+      - name: Run yamllint
+        run: yamllint -c .yamllint.yaml .
+
+  actionlint:
+    name: actionlint (GitHub Actions)
+    needs: changes
+    if: needs.changes.outputs.actions == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        run: |
+          bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color \
+            -ignore 'property "target" is not defined' \
+            -ignore 'SC2046' \
+            -ignore 'shellcheck reported issue in this script: SC2086'
+
+  markdownlint:
+    name: markdownlint
+    needs: changes
+    if: needs.changes.outputs.markdown == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DavidAnson/markdownlint-cli2-action@v17
+        with:
+          config: .markdownlint.yaml
+          globs: |
+            **/*.md
+            !node_modules/**
+            !.venv/**
+            !dist/**
+            !build/**
+            !.next/**
+            !**/CHANGELOG.md
+            !clients/web/public/**
+            !benchmark/results/**
+
+  typos:
+    name: typos (spell check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crate-ci/typos@v1.27.3
+
+  knip:
+    name: knip (TS dead code)
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Build streaming workspace
+        run: npm run build --workspace=@decepticon/streaming
+      - name: Run knip
+        run: npx knip --no-exit-code --reporter compact
+        continue-on-error: true
+
+  golangci:
+    name: golangci-lint (Go launcher)
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: clients/launcher/go.sum
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.1.0
+          working-directory: clients/launcher
+          args: --config=../../.golangci.yml --timeout=5m
+
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependency Review (requires repo dependency-graph enabled)
+        uses: actions/dependency-review-action@v4
+        continue-on-error: true
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+          retry-on-snapshot-warnings: true
+
+  comprehensive-summary:
+    name: Comprehensive CI summary
+    runs-on: ubuntu-latest
+    needs:
+      - semgrep-custom
+      - semgrep-public
+      - bandit
+      - mypy
+      - python-quality
+      - osv-scanner
+      - trufflehog
+      - hadolint
+      - shellcheck
+      - trivy-fs
+      - checkov
+      - yamllint
+      - actionlint
+      - markdownlint
+      - typos
+      - knip
+      - golangci
+    if: always()
+    steps:
+      - name: Summarize
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          {
+            echo "## Comprehensive CI summary"
+            echo ""
+            echo "Tool results uploaded to the GitHub Security tab as SARIF."
+            echo "Drill into individual jobs in the run for details."
+          } >> "$GITHUB_STEP_SUMMARY"

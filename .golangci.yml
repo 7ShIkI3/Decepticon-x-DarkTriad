@@ -1,0 +1,103 @@
+version: "2"
+
+run:
+  timeout: 5m
+  go: "1.24"
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - gocritic
+    - revive
+    - misspell
+    - unconvert
+    - unparam
+    - bodyclose
+    - contextcheck
+    - errorlint
+    - nilerr
+    - prealloc
+    - copyloopvar
+    - durationcheck
+    - exhaustive
+    - gocheckcompilerdirectives
+    - gomoddirectives
+    - mnd
+    - nestif
+    - nilnil
+    - noctx
+    - nolintlint
+    - reassign
+    - sqlclosecheck
+    - testifylint
+    - thelper
+    - tparallel
+    - usestdlibvars
+    - wastedassign
+
+  settings:
+    gosec:
+      excludes:
+        - G104
+      severity: medium
+      confidence: medium
+    revive:
+      severity: warning
+      rules:
+        - name: exported
+        - name: var-naming
+        - name: indent-error-flow
+        - name: range
+        - name: errorf
+        - name: error-naming
+        - name: error-return
+        - name: if-return
+        - name: increment-decrement
+        - name: var-declaration
+        - name: package-comments
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: time-naming
+        - name: unexported-return
+        - name: unused-parameter
+        - name: superfluous-else
+    misspell:
+      locale: US
+    gocritic:
+      disabled-checks:
+        - hugeParam
+        - rangeValCopy
+        - paramTypeCombine
+
+  exclusions:
+    paths:
+      - ".*\\.pb\\.go$"
+      - ".*_gen\\.go$"
+    rules:
+      - path: "_test\\.go"
+        linters:
+          - gosec
+          - mnd
+          - errcheck
+      - path: "internal/platform/.*\\.go"
+        linters:
+          - gosec
+        text: "G204"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+    - gofumpt
