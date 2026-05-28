@@ -202,3 +202,64 @@ def test_invalid_path_outside_workspace_fails_closed() -> None:
 
     assert scoped.ls("/workspace").error is not None
     assert backend.calls == []
+
+
+def test_engagement_root_is_materialized_on_first_tool_call() -> None:
+    """The engagement subdir under ``/workspace`` must exist by the time the
+    first agent tool call lands. Backends create dirs lazily on the first
+    ``write``, so without this materialization step the first ``ls`` (the
+    planner's "what is here?" probe) trips ``path_not_found`` against the
+    not-yet-created subdir. Verify a single marker write is issued on
+    construction, and that it happens before any other backend call.
+    """
+    backend = RecordingBackend()
+    scoped = EngagementFilesystemBackend(backend, "/workspace/eng-1")
+    # No backend traffic until first tool call.
+    assert backend.calls == []
+    scoped.ls("/workspace")
+    # Marker write precedes the ls.
+    op_names = [name for (name, _) in backend.calls]
+    assert op_names == ["write", "ls_info"]
+    first_op, first_args = backend.calls[0]
+    assert first_op == "write"
+    assert first_args[0] == "/workspace/eng-1/.engagement"  # type: ignore[index]
+
+
+def test_engagement_root_materialized_only_once_across_tool_calls() -> None:
+    """The marker write is idempotent at the middleware level — running
+    five tool calls in a row must yield exactly one materialization write."""
+    backend = RecordingBackend()
+    scoped = EngagementFilesystemBackend(backend, "/workspace/eng-1")
+    scoped.ls("/workspace")
+    scoped.ls("/workspace/plan")
+    scoped.read("/workspace/plan/roe.json")
+    scoped.glob("**/*.json")
+    scoped.grep("target", path="/workspace")
+    write_calls = [op for (op, _) in backend.calls if op == "write"]
+    assert len(write_calls) == 1
+
+
+class _ErrorBackend(RecordingBackend):
+    """Surface a path_not_found error that interpolates the resolved real
+    path. Mirrors what the HTTPSandbox backend does on a missing dir."""
+
+    def ls(self, path: str) -> LsResult:
+        self.calls.append(("ls_info", path))
+        return LsResult(error=f"Path '{path}': path_not_found")
+
+
+def test_backend_error_does_not_leak_engagement_internal_path() -> None:
+    """Backend error strings interpolate the resolved real path (e.g.
+    ``/workspace/<engagement-slug>``); the middleware must rewrite that back
+    to the virtual path the agent originally asked for, so error output
+    never exposes harness-internal naming."""
+    backend = _ErrorBackend()
+    scoped = EngagementFilesystemBackend(backend, "/workspace/eng-1")
+
+    result = scoped.ls("/workspace")
+
+    assert result.error is not None
+    # Agent asked for "/workspace" — error must echo "/workspace", not
+    # "/workspace/eng-1".
+    assert "/workspace/eng-1" not in result.error
+    assert "/workspace" in result.error
