@@ -65,6 +65,27 @@ class EngagementFilesystemBackend(BackendProtocol):
     def __init__(self, backend: BackendProtocol, workspace_path: str | None) -> None:
         self._backend = backend
         self._root = _normalize_engagement_workspace(workspace_path)
+        # Engagement subdir under WORKSPACE is otherwise materialized lazily by
+        # the first ``write`` — but the very first agent step is typically a
+        # filesystem inspection (``ls`` / ``glob``), which the backend surfaces
+        # as ``path_not_found`` against the not-yet-created subdir. Drop a
+        # marker file at the root on construction so the workspace is always
+        # observable. Backends auto-create parent dirs on write, so this is
+        # the cheapest way to enforce the "workspace is reachable" invariant
+        # without expanding the backend protocol.
+        self._root_ensured = False
+
+    def _ensure_root(self) -> None:
+        if self._root_ensured or self._root is None:
+            return
+        self._root_ensured = True
+        try:
+            self._backend.write(f"{self._root}/.engagement", "")
+        except Exception:
+            # Best-effort: a second engagement reusing the same backend will
+            # find the marker already there and the write will refuse. That's
+            # fine — the dir is materialized regardless.
+            pass
 
     def _real(self, path: str | None) -> str:
         if self._root is None:
@@ -110,14 +131,24 @@ class EngagementFilesystemBackend(BackendProtocol):
         path = self._virtual(info.get("path", ""))
         return {**info, "path": path} if path else None
 
+    def _mask(self, error: str | None, real_path: str) -> str | None:
+        """Backend errors interpolate the resolved real path (e.g.
+        ``/workspace/<engagement-slug>/...``); rewrite it back to the virtual
+        path the agent originally asked for so engagement-internal naming
+        never leaks into tool output."""
+        if not error or self._root is None:
+            return error
+        return error.replace(real_path, self._virtual(real_path) or real_path)
+
     def ls(self, path: str) -> LsResult:
+        self._ensure_root()
         try:
             real_path = self._real(path)
         except ValueError as e:
             return LsResult(error=str(e))
         result = self._backend.ls(real_path)
         if result.error:
-            return result
+            return LsResult(error=self._mask(result.error, real_path))
         return LsResult(
             entries=[mapped for item in result.entries or [] if (mapped := self._info(item))]
         )
@@ -127,16 +158,25 @@ class EngagementFilesystemBackend(BackendProtocol):
         return result.entries or []
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        self._ensure_root()
         try:
-            return self._backend.read(self._real(file_path), offset=offset, limit=limit)
+            real_path = self._real(file_path)
         except ValueError as e:
             return ReadResult(error=str(e))
+        result = self._backend.read(real_path, offset=offset, limit=limit)
+        return (
+            replace(result, error=self._mask(result.error, real_path)) if result.error else result
+        )
 
     def write(self, file_path: str, content: str) -> WriteResult:
+        self._ensure_root()
         try:
-            result = self._backend.write(self._real(file_path), content)
+            real_path = self._real(file_path)
         except ValueError as e:
             return WriteResult(error=str(e))
+        result = self._backend.write(real_path, content)
+        if result.error:
+            return replace(result, error=self._mask(result.error, real_path))
         path = self._virtual(result.path or "") if result.path else None
         return replace(result, path=path) if path else result
 
@@ -147,21 +187,26 @@ class EngagementFilesystemBackend(BackendProtocol):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
+        self._ensure_root()
         try:
-            result = self._backend.edit(self._real(file_path), old_string, new_string, replace_all)
+            real_path = self._real(file_path)
         except ValueError as e:
             return EditResult(error=str(e))
+        result = self._backend.edit(real_path, old_string, new_string, replace_all)
+        if result.error:
+            return replace(result, error=self._mask(result.error, real_path))
         path = self._virtual(result.path or "") if result.path else None
         return replace(result, path=path) if path else result
 
     def grep(self, pattern: str, path: str | None = None, glob: str | None = None) -> GrepResult:
+        self._ensure_root()
         try:
             real_path = self._real(path)
         except ValueError as e:
             return GrepResult(error=str(e))
         result = self._backend.grep(pattern, path=real_path, glob=glob)
         if result.error:
-            return result
+            return GrepResult(error=self._mask(result.error, real_path))
         return GrepResult(
             matches=[
                 {**match, "path": mapped}
@@ -180,6 +225,7 @@ class EngagementFilesystemBackend(BackendProtocol):
         return result.error if result.error else result.matches or []
 
     def glob(self, pattern: str, path: str = "/") -> GlobResult:
+        self._ensure_root()
         try:
             real_pattern = self._glob(pattern)
             real_path = self._real(path)
@@ -187,7 +233,7 @@ class EngagementFilesystemBackend(BackendProtocol):
             return GlobResult(error=str(e))
         result = self._backend.glob(real_pattern, path=real_path)
         if result.error:
-            return result
+            return GlobResult(error=self._mask(result.error, real_path))
         return GlobResult(
             matches=[mapped for item in result.matches or [] if (mapped := self._info(item))]
         )
