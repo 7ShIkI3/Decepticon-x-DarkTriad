@@ -169,7 +169,7 @@ class TestEncodeProps:
         assert "ts" in parsed
 
     def test_encode_fallback_on_forced_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import decepticon.tools.research.neo4j_store as mod
+        from decepticon.tools.research import neo4j_store as mod
 
         original_dumps = json.dumps
 
