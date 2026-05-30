@@ -191,6 +191,11 @@ def parse_token(token: str) -> JWTToken:
         if isinstance(header.jku, str)
         else ("" if header.jku is None else str(header.jku))
     )
+    x5u_s = (
+        header.x5u
+        if isinstance(header.x5u, str)
+        else ("" if header.x5u is None else str(header.x5u))
+    )
 
     if alg_s.lower() == "none":
         tok.findings.append("alg=none — server MAY accept unsigned tokens (CVE class)")
@@ -198,8 +203,10 @@ def parse_token(token: str) -> JWTToken:
         tok.findings.append("alg=HS256 with jku header — key confusion candidate")
     if kid_s and ("../" in kid_s or "%2f" in kid_s.lower()):
         tok.findings.append("kid contains path traversal — file read / SQLi candidate")
-    if jku_s and not jku_s.startswith("https://"):
-        tok.findings.append("jku over non-HTTPS or attacker-controlled host — key confusion")
+    if jku_s:
+        tok.findings.append("jku points at an attacker-influenced host — key confusion")
+    if x5u_s:
+        tok.findings.append("x5u points at an attacker-influenced host — key confusion")
     if claims.expired:
         tok.findings.append("token already expired — test whether server enforces exp")
     if claims.exp is None:
