@@ -68,6 +68,16 @@ _current_workspace_path: contextvars.ContextVar[str] = contextvars.ContextVar(
 INLINE_LIMIT = 15_000  # ≤15K chars: return inline; >15K: offload to <engagement>/.scratch/
 # >5M: size watchdog in sandbox_kernel/tmux.py kills the command (SIZE_WATCHDOG_CHARS)
 
+_STATUS_PREFIXES = (
+    "[BACKGROUND]",
+    "[RUNNING",
+    "[DONE",
+    "[IDLE]",
+    "[KILLED]",
+    "[EMPTY]",
+    "[STALE]",
+)
+
 # ─── Scratch-file TTL prune (bounds <engagement>/.scratch/ growth) ────────
 # Files persist long enough for the agent's grep/read multi-pass workflow,
 # then expire so the dir does not grow unboundedly across long engagements.
@@ -420,7 +430,7 @@ async def bash(
     # Tier 1 (≤15K): return inline — fits comfortably in context
     # Tier 2 (>15K): offload to file, return preview + file reference
     # Tier 3 (>5M): handled by size watchdog in sandbox_kernel/tmux.py (command killed)
-    if len(result) > INLINE_LIMIT and not result.startswith("["):
+    if len(result) > INLINE_LIMIT and not result.startswith(_STATUS_PREFIXES):
         return await _offload_large_output(result, command, session, workspace_path)
 
     return result
