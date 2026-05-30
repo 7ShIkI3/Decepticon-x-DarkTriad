@@ -40,6 +40,7 @@ the right thing to ship as the default.
 from __future__ import annotations
 
 import base64
+import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -191,7 +192,7 @@ def _verify_token(authorization: str | None) -> None:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="missing bearer token",
         )
-    if authorization[len("Bearer ") :] != _required_token:
+    if not hmac.compare_digest(authorization[len("Bearer ") :], _required_token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid token",
