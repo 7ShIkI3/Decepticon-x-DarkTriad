@@ -30,10 +30,23 @@ import ipaddress
 import re
 import shlex
 from collections.abc import Callable
+from urllib.parse import urlsplit
 
 _IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 _CIDR_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}/\d{1,2}\b")
-_URL_RE = re.compile(r"\b(?:https?|ftp|file|smb|nfs|ssh|rdp|ldaps?)://([^\s/:]+)", re.IGNORECASE)
+# Capture the whole authority (up to the path/query/fragment/whitespace), NOT
+# just the leading ``[^\s/:]+`` slice. The old slice stopped at the first ``:``
+# and never crossed ``@``, so ``scheme://in-scope@evil.com/`` yielded the
+# in-scope userinfo (or nothing) instead of the real connect host ``evil.com``
+# — a scope-enforcement bypass. ``_host_from_authority`` then RFC-3986-splits
+# off userinfo + port and de-brackets IPv6 literals.
+_URL_AUTHORITY_RE = re.compile(
+    r"\b(?:https?|ftp|file|smb|nfs|ssh|rdp|ldaps?)://([^\s/\\?#]+)", re.IGNORECASE
+)
+# Threshold above which a bare decimal host is treated as a packed IPv4 integer
+# (e.g. ``http://2852039166/`` == 169.254.169.254) rather than a port/number.
+# 2**24 keeps small integers (ports, counts) from being mangled into IPs.
+_PACKED_IPV4_MIN = 1 << 24
 _HOSTNAME_AFTER_VERB_RE = re.compile(
     r"\b(?:curl|wget|httpx|nmap|masscan|rustscan|ssh|scp|sftp|rsync|"
     r"smbclient|smbmap|crackmapexec|nxc|netexec|nikto|sqlmap|hydra|ffuf|"
@@ -131,19 +144,71 @@ def _is_valid_target(token: str) -> bool:
     return True
 
 
+def _canon_host(token: str) -> str:
+    """Canonicalize a host token so scope matching is encoding-independent.
+
+    De-brackets IPv6 literals, normalizes packed integer/hex IPv4 encodings to
+    dotted-quad, and compresses valid IP literals to their canonical string.
+    Hostnames pass through lower-cased. This closes the IMDS/forbidden-dest
+    bypass where ``http://2852039166/`` or ``http://0xa9fea9fe/`` reach
+    169.254.169.254 without matching a dotted-quad deny rule.
+    """
+    raw = token.strip()
+    bare = raw[1:-1] if raw.startswith("[") and raw.endswith("]") else raw
+    if not bare:
+        return raw.lower()
+    if ":" not in bare and "." not in bare:
+        try:
+            as_int = int(bare, 16) if bare.lower().startswith("0x") else int(bare)
+        except ValueError:
+            return bare.lower()
+        if bare.lower().startswith("0x") or as_int >= _PACKED_IPV4_MIN:
+            try:
+                return str(ipaddress.ip_address(as_int))
+            except ValueError:
+                return bare.lower()
+        return bare.lower()
+    try:
+        return str(ipaddress.ip_address(bare))
+    except ValueError:
+        return bare.lower()
+
+
+def _host_from_authority(authority: str) -> str | None:
+    """Return the real connect host from a URL authority, RFC-3986-correctly.
+
+    Drops userinfo (everything through the last ``@``) and the port, and
+    de-brackets IPv6 literals — so an ``in-scope@evil.com`` decoy can't mask
+    the true host. Returns None when no host is present.
+    """
+    try:
+        host = urlsplit("//" + authority).hostname
+    except ValueError:
+        return None
+    return host or None
+
+
 def _extract_generic(command: str) -> set[str]:
     found: set[str] = set()
     found.update(_IP_RE.findall(command))
     for cidr in _CIDR_RE.findall(command):
         found.add(cidr)
-    for host in _URL_RE.findall(command):
-        found.add(host)
+    for authority in _URL_AUTHORITY_RE.findall(command):
+        host = _host_from_authority(authority)
+        if host:
+            found.add(host)
     for m in _HOSTNAME_AFTER_VERB_RE.finditer(command):
         candidate = m.group(1).rstrip(":,;\"'").lstrip("@")
         if candidate.startswith("http"):
             continue
-        found.add(candidate)
-    return {t for t in found if _is_valid_target(t)}
+        if ":" in candidate and not _looks_ipv6(candidate):
+            # A compound option value (e.g. ``--resolve host:port:ip``) is
+            # captured as one token; split on ``:`` so each piece is validated
+            # independently instead of emitting a junk ``host:port:ip`` target.
+            found.update(candidate.split(":"))
+        else:
+            found.add(candidate)
+    return {c for t in found if (c := _canon_host(t)) and _is_valid_target(c)}
 
 
 def _extract_nmap_targets(command: str) -> set[str]:
