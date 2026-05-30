@@ -167,7 +167,7 @@ def _get_session() -> HTTPSession:
 
 
 @tool
-def http_request(
+async def http_request(
     method: str,
     url: str,
     headers_json: str = "{}",
@@ -186,14 +186,16 @@ def http_request(
     Returns:
         JSON with status, headers, body (truncated), elapsed_ms, request_id
     """
-    import asyncio
-
     try:
         headers = json.loads(headers_json) if headers_json else {}
     except json.JSONDecodeError:
         return _json({"error": "Invalid headers JSON"})
 
-    async def _do():
+    # Async tool: await the session directly. The previous implementation
+    # drove the coroutine via ``asyncio.get_event_loop().run_until_complete``,
+    # which raises ``RuntimeError: ... cannot be called from a running event
+    # loop`` under LangGraph's async runtime. Mirrors the async bash tools.
+    try:
         session = _get_session()
         resp = await session.request(
             method=method.upper(),
@@ -202,10 +204,6 @@ def http_request(
             body=body.encode() if body else None,
             tag=tag,
         )
-        return resp
-
-    try:
-        resp = asyncio.get_event_loop().run_until_complete(_do())
         return _json(
             {
                 "status": resp.status,
