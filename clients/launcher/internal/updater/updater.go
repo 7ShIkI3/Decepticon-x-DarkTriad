@@ -108,8 +108,8 @@ func compareSemver(a, b string) int {
 
 // SyncConfigFiles downloads updated docker-compose.yml and litellm.yaml.
 //
-// When ``release`` is non-nil AND the release exposes a
-// ``config-checksums.txt`` asset, every downloaded file is verified
+// When “release“ is non-nil AND the release exposes a
+// “config-checksums.txt“ asset, every downloaded file is verified
 // against the manifest before being written to the install dir.
 // raw.githubusercontent.com (where the config files live) is served
 // from GitHub's CDN; the release asset is the authoritative integrity
@@ -117,7 +117,7 @@ func compareSemver(a, b string) int {
 //
 // Branch-tracking installs (DECEPTICON_BRANCH set in .env, no release
 // asset available) fall back to the legacy download-without-verify
-// behavior with a warning. ``release == nil`` exists for this path.
+// behavior with a warning. “release == nil“ exists for this path.
 func SyncConfigFiles(branch string, release *Release) error {
 	home := config.DecepticonHome()
 	files := map[string]string{
@@ -134,13 +134,18 @@ func SyncConfigFiles(branch string, release *Release) error {
 
 	for src, dst := range files {
 		url := fmt.Sprintf("%s/%s/%s", RawBaseURL, branch, src)
-		if err := downloadFile(client, url, dst); err != nil {
+		tmp := dst + ".tmp"
+		defer os.Remove(tmp)
+		if err := downloadFile(client, url, tmp); err != nil {
 			return fmt.Errorf("%s: %w", src, err)
 		}
 		if manifest != nil {
-			if err := verifyAgainstManifest(dst, src, manifest); err != nil {
+			if err := verifyAgainstManifest(tmp, src, manifest); err != nil {
 				return fmt.Errorf("%s: %w", src, err)
 			}
+		}
+		if err := os.Rename(tmp, dst); err != nil {
+			return fmt.Errorf("%s: rename: %w", src, err)
 		}
 		ui.Success("Updated " + src)
 	}
@@ -149,7 +154,7 @@ func SyncConfigFiles(branch string, release *Release) error {
 
 // fetchManifest downloads a sha256sum-format manifest asset from the
 // given release and returns it as a map of "manifest path → hex digest".
-// Returns (nil, nil) when ``release`` is nil OR the asset is absent
+// Returns (nil, nil) when “release“ is nil OR the asset is absent
 // (branch-tracking installs and pre-1.0.27 releases respectively); the
 // caller treats that as legacy mode and skips per-file verification.
 func fetchManifest(client *http.Client, release *Release, assetName string) (map[string]string, error) {
@@ -206,7 +211,7 @@ func parseChecksumManifest(r io.Reader) (map[string]string, error) {
 }
 
 // verifyAgainstManifest computes the sha256 of dst and compares it
-// against the entry for ``manifestPath`` in the supplied manifest map.
+// against the entry for “manifestPath“ in the supplied manifest map.
 func verifyAgainstManifest(dst, manifestPath string, manifest map[string]string) error {
 	expected, ok := manifest[manifestPath]
 	if !ok {
@@ -270,14 +275,14 @@ func downloadFile(client *http.Client, url, dst string) error {
 		return fmt.Errorf("read: %w", err)
 	}
 
-	return os.WriteFile(dst, data, 0o644)
+	return os.WriteFile(dst, data, 0o600)
 }
 
 // SelfUpdate downloads and replaces the current binary. The download is
-// verified against ``checksums.txt`` (GoReleaser-produced) before the
+// verified against “checksums.txt“ (GoReleaser-produced) before the
 // atomic rename — a tampered binary on the GitHub CDN never reaches
 // disk in the executable path. Releases that predate checksum
-// verification (no ``checksums.txt`` asset) emit a warning and fall
+// verification (no “checksums.txt“ asset) emit a warning and fall
 // back to the legacy unverified replace.
 func SelfUpdate(release *Release) error {
 	assetName := fmt.Sprintf("decepticon-%s-%s", runtime.GOOS, runtime.GOARCH)
@@ -306,7 +311,10 @@ func SelfUpdate(release *Release) error {
 	}
 
 	tmpPath := execPath + ".tmp"
-	tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	// Create temp file owner-only so an unverified binary is never
+	// world-readable or executable. Chmod to 0o755 happens only after
+	// checksum verification succeeds, immediately before the rename.
+	tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
@@ -334,6 +342,12 @@ func SelfUpdate(release *Release) error {
 		}
 	}
 
+	// Verification passed — make the binary executable before renaming.
+	if err := os.Chmod(tmpPath, 0o755); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
+
 	// Atomic replace
 	if err := os.Rename(tmpPath, execPath); err != nil {
 		os.Remove(tmpPath)
@@ -354,7 +368,7 @@ func WriteVersion(version string) error {
 // update notice. It never mutates the binary, config files, or Docker images;
 // users apply updates explicitly with `decepticon update`.
 //
-// Used as the fallback path when ``PromptIfUpdateAvailable`` cannot present
+// Used as the fallback path when “PromptIfUpdateAvailable“ cannot present
 // an interactive prompt (e.g. stdin is not a TTY in CI / piped invocation).
 func NotifyIfUpdateAvailable(currentVersion string) bool {
 	release, err := FetchLatestRelease()
@@ -373,9 +387,9 @@ func NotifyIfUpdateAvailable(currentVersion string) bool {
 
 // ApplyUpdate runs the full upgrade flow: SyncConfigFiles, Docker image
 // pull, SelfUpdate (binary), WriteVersion. Shared between the
-// ``decepticon update`` command and the interactive launch-time prompt.
+// “decepticon update“ command and the interactive launch-time prompt.
 //
-// ``ref`` is the git ref used for ``SyncConfigFiles`` — ``release.TagName``
+// “ref“ is the git ref used for “SyncConfigFiles“ — “release.TagName“
 // for tagged releases, or a branch name for development tracking.
 //
 // Errors from individual steps are surfaced as warnings via ui rather
@@ -422,18 +436,18 @@ func ApplyUpdate(release *Release, ref string) error {
 // caller's flow runs against the new version (matches the Claude Code /
 // Codex CLI behavior of "update applied, restarting").
 //
-// Returns ``true`` only when the user approved AND ApplyUpdate succeeded
+// Returns “true“ only when the user approved AND ApplyUpdate succeeded
 // AND re-exec was issued. On POSIX the re-exec replaces the process via
-// ``syscall.Exec``, so a true return is effectively unreachable; the
+// “syscall.Exec“, so a true return is effectively unreachable; the
 // helper still returns the value for tests and Windows callers, where
-// re-exec spawns a child + ``os.Exit`` from the parent.
+// re-exec spawns a child + “os.Exit“ from the parent.
 //
 // Skips silently (returns false, nil) when:
-//   - ``currentVersion`` is empty / "dev" — local build, no published release to track.
-//   - ``FetchLatestRelease`` fails — offline or GitHub unavailable.
-//   - the latest release is not newer than ``currentVersion``.
+//   - “currentVersion“ is empty / "dev" — local build, no published release to track.
+//   - “FetchLatestRelease“ fails — offline or GitHub unavailable.
+//   - the latest release is not newer than “currentVersion“.
 //   - stdin is not a TTY — CI / piped invocations fall back to
-//     ``NotifyIfUpdateAvailable`` so the user still sees the notice.
+//     “NotifyIfUpdateAvailable“ so the user still sees the notice.
 func PromptIfUpdateAvailable(currentVersion string) (bool, error) {
 	if currentVersion == "" || currentVersion == "dev" {
 		return false, nil
@@ -461,8 +475,8 @@ func PromptIfUpdateAvailable(currentVersion string) (bool, error) {
 	if err := huh.NewConfirm().
 		Title(fmt.Sprintf("Install %s now?", release.TagName)).
 		Description(
-			"Updates the launcher binary, docker-compose config, and pulls\n"+
-				"the matching Docker images. Decepticon will restart with\n"+
+			"Updates the launcher binary, docker-compose config, and pulls\n" +
+				"the matching Docker images. Decepticon will restart with\n" +
 				"the new version once the update finishes.",
 		).
 		Affirmative("Yes, update").

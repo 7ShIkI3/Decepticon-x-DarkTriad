@@ -7,8 +7,8 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"runtime"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -123,22 +123,32 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// 2.6. Set CLAUDE_CREDENTIALS_VOLUME for conditional mount in docker-compose.
 	// When the credentials file exists, mount it into litellm. Otherwise mount
 	// /dev/null (NUL on Windows) so docker doesn't create it as a directory.
-	userHome, _ := os.UserHomeDir()
-	credsPath := filepath.Join(userHome, ".claude", ".credentials.json")
-	if _, statErr := os.Stat(credsPath); statErr == nil {
-		_ = os.Setenv("CLAUDE_CREDENTIALS_VOLUME", credsPath)
-	} else {
+	userHome, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		// A failed home-dir resolution must not fall through to a relative
+		// ".claude/..." path, which os.Stat would resolve against the CWD and
+		// mis-mount. Skip the optional host credential mounts; onboarding can
+		// supply them later.
+		ui.Warning("Could not resolve home directory; skipping host credential mounts: " + homeErr.Error())
 		_ = os.Setenv("CLAUDE_CREDENTIALS_VOLUME", nullDevice())
-	}
-
-	// Same pattern for the Codex CLI credential store at ~/.codex/auth.json.
-	// The new auth/ ChatGPT handler reads (and writes) this file directly so
-	// a host-side `codex login` flows into the container without a rebuild.
-	codexAuthPath := filepath.Join(userHome, ".codex", "auth.json")
-	if _, statErr := os.Stat(codexAuthPath); statErr == nil {
-		_ = os.Setenv("CODEX_AUTH_VOLUME", codexAuthPath)
-	} else {
 		_ = os.Setenv("CODEX_AUTH_VOLUME", nullDevice())
+	} else {
+		credsPath := filepath.Join(userHome, ".claude", ".credentials.json")
+		if _, statErr := os.Stat(credsPath); statErr == nil {
+			_ = os.Setenv("CLAUDE_CREDENTIALS_VOLUME", credsPath)
+		} else {
+			_ = os.Setenv("CLAUDE_CREDENTIALS_VOLUME", nullDevice())
+		}
+
+		// Same pattern for the Codex CLI credential store at ~/.codex/auth.json.
+		// The new auth/ ChatGPT handler reads (and writes) this file directly so
+		// a host-side `codex login` flows into the container without a rebuild.
+		codexAuthPath := filepath.Join(userHome, ".codex", "auth.json")
+		if _, statErr := os.Stat(codexAuthPath); statErr == nil {
+			_ = os.Setenv("CODEX_AUTH_VOLUME", codexAuthPath)
+		} else {
+			_ = os.Setenv("CODEX_AUTH_VOLUME", nullDevice())
+		}
 	}
 
 	// 2.5. Update check. Must run synchronously: on a TTY,
