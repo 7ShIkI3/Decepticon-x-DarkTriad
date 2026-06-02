@@ -223,6 +223,16 @@ ci-lint:
 ci-test:
 	uv run pytest -n auto -q -m "not slow"
 
+## SKILL.md schema validator (warn mode — Phase 0). Exit 0 even if violations found.
+.PHONY: audit-skills
+audit-skills:
+	uv run python -m decepticon.skill_audit --mode warn
+
+## SKILL.md schema validator (strict mode — post-Phase-0 CI gate). Exit 1 on any violation.
+.PHONY: audit-skills-strict
+audit-skills-strict:
+	uv run python -m decepticon.skill_audit --mode strict
+
 ## main-push lane: slow included, coverage 60% gate (ratcheted from 35% in #380).
 ci-test-coverage:
 	uv run pytest -n auto --cov --cov-report=xml --cov-report=term --cov-fail-under=60

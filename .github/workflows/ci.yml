@@ -191,6 +191,12 @@ jobs:
           name: basedpyright-${{ github.run_id }}
           path: bp.json
           retention-days: 7
+      # SKILL.md schema validator — mandatory after Phase 0 completed
+      # the 208-violation → 0-violation cleanup. Any new SKILL.md added
+      # via PR must conform to the canonical schema (see
+      # docs/skill-schema.md) or the lint stage blocks the merge.
+      - name: Skill corpus audit (strict mode)
+        run: make audit-skills-strict
       # PRs run tests without coverage instrumentation — coverage adds ~3x
       # runtime and PR feedback latency matters more than coverage tracking
       # on every change. Coverage is enforced on main pushes (next step).
