@@ -92,8 +92,7 @@ class Neo4jBackend:
             from neo4j import GraphDatabase  # noqa: PLC0415
         except ImportError as exc:
             raise RuntimeError(
-                "Skillogy server requires the neo4j driver. "
-                "Install with: pip install neo4j>=5.24"
+                "Skillogy server requires the neo4j driver. Install with: pip install neo4j>=5.24"
             ) from exc
         self._driver = GraphDatabase.driver(uri, auth=(user, password))
         self._database = database
