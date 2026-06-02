@@ -233,6 +233,18 @@ audit-skills:
 audit-skills-strict:
 	uv run python -m decepticon.skill_audit --mode strict
 
+## Skill graph builder (Phase 1a) — compile SKILL.md + seeds + MITRE STIX
+## into packages/decepticon/decepticon/skills/.graph/skills.cypher.
+.PHONY: build-skill-graph
+build-skill-graph:
+	uv run python -m decepticon.skillogy.builder --frozen-built-at
+
+## CI gate — assert the checked-in skills.cypher matches what the
+## builder produces from the current SKILL.md + seed YAML + pinned STIX.
+.PHONY: check-skill-graph
+check-skill-graph:
+	uv run python -m decepticon.skillogy.builder --frozen-built-at --check
+
 ## main-push lane: slow included, coverage 60% gate (ratcheted from 35% in #380).
 ci-test-coverage:
 	uv run pytest -n auto --cov --cov-report=xml --cov-report=term --cov-fail-under=60
