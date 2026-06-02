@@ -200,6 +200,34 @@ class Neo4jBackend:
         with self._driver.session(database=self._database, default_access_mode="READ") as session:
             return [dict(record) for record in session.run(cypher, parameters=params)]
 
+    # ---- per-phase MoC summary (used by SkillogyMiddleware system prompt) ----
+
+    def query_moc_summary(self, phase: str, *, limit: int = 25) -> list[dict[str, Any]]:
+        """Return MoCs belonging to ``phase``, ordered by name.
+
+        Each row carries ``name``, ``description`` (empty string when
+        the MoC has none), and ``parent_phase``. Returns an empty list
+        when the phase has no MoCs registered yet — some Phase nodes
+        are placeholders until corpus coverage catches up, and the
+        caller renders a "no MoCs yet" line instead of a bullet list.
+        """
+        cypher = (
+            "MATCH (m:MoC)-[:BELONGS_TO_PHASE]->(:Phase {name: $phase}) "
+            "RETURN m.name AS name, "
+            "       coalesce(m.description, '') AS description, "
+            "       coalesce(m.parent_phase, $phase) AS parent_phase "
+            "ORDER BY name "
+            "LIMIT $limit"
+        )
+        with self._driver.session(database=self._database, default_access_mode="READ") as session:
+            return [
+                dict(record)
+                for record in session.run(
+                    cypher,
+                    parameters={"phase": phase, "limit": int(min(max(limit, 1), 100))},
+                )
+            ]
+
     # ---- explicit graph traversal (used by traverse RPC) ----
 
     def traverse(

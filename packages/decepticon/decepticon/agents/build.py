@@ -410,8 +410,10 @@ def build_middleware(
     result.extend(load_plugin_middleware(role=role, backend=backend))
 
     # Swap SkillsMiddleware -> SkillogyMiddleware when DECEPTICON_USE_SKILLOGY
-    # is set. No-op otherwise, so the default runtime is unchanged.
-    result = maybe_install_skillogy(result)
+    # is set. No-op otherwise, so the default runtime is unchanged. Role is
+    # threaded through so the SkillogyMiddleware can scope its MoC summary
+    # block to the agent's phase (see _PHASE_FOR_ROLE in middleware/skillogy.py).
+    result = maybe_install_skillogy(result, role=role)
 
     return result
 

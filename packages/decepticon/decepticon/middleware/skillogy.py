@@ -54,20 +54,75 @@ log = logging.getLogger(__name__)
 _DEFAULT_NEO4J_URI = "bolt://neo4j:7687"
 _DEFAULT_NEO4J_USER = "neo4j"
 _DEFAULT_NEO4J_PASSWORD = "decepticon-graph"  # nosec B105 — local-dev default; production overrides via env
-_POLICY_PROMPT = (
-    "\n\n[Skillogy access]\n"
-    "Skills live in a Neo4j knowledge graph. You have three tools:\n"
-    "- ``find_skill(query?, subdomain?, mitre_id?, tag?, tactic_id?, limit=20)`` —\n"
-    "  relationship-aware discovery. Filters AND-combine. Returns each hit's name,\n"
-    "  path, subdomain, description, matched_mitre, matched_tags so you see why it matched.\n"
-    "- ``load_skill(name_or_path)`` — fetch one SKILL.md body. Accept either a unique\n"
-    "  name (e.g. 'kerberoasting') or the canonical /skills/.../SKILL.md path.\n"
-    "- ``traverse(from_path, edge_types?, depth=2)`` — variable-length BFS from a Skill\n"
-    "  seed along the relationship whitelist (IN_PHASE, IMPLEMENTS, TAGGED, BELONGS_TO,\n"
-    "  RELATED_TO, HAS_TECHNIQUE, HAS_SUBTECHNIQUE).\n"
-    "Workflow: prefer find_skill to narrow candidates, then load_skill on the chosen\n"
-    "match. Use traverse for 'what relates to this' questions.\n"
-)
+
+# Static graph schema + 3-tool usage policy. This block is identical for
+# every agent — the per-agent phase context is rendered separately by
+# ``_render_phase_block`` and concatenated at injection time.
+_POLICY_PROMPT = """
+
+[Skillogy access]
+Skills live in a Neo4j knowledge graph (MITRE ATT&CK Enterprise v19.1).
+
+Graph schema — what the tool filters walk:
+  Nodes
+    (:Skill   {name, path, subdomain, description, when_to_use, body})
+    (:Phase   {name, kill_chain_order, kind})    e.g. 'reconnaissance', 'active-directory'
+    (:MoC     {name, parent_phase, description}) per-phase concept navigation map
+    (:Tag     {name})                            e.g. 'kerberoasting', 'credential-theft'
+    (:Tactic  {id, name})                        e.g. id='TA0001' 'Initial Access'
+    (:Technique {id, name, is_subtechnique, parent_id, platforms})
+                                                 e.g. id='T1558.003' Kerberoasting
+  Edges
+    (:Skill)-[:IN_PHASE]->(:Phase)
+    (:Skill)-[:BELONGS_TO]->(:MoC)
+    (:Skill)-[:TAGGED]->(:Tag)
+    (:Skill)-[:IMPLEMENTS]->(:Technique)
+    (:Tactic)-[:HAS_TECHNIQUE]->(:Technique)
+    (:Technique)-[:HAS_SUBTECHNIQUE]->(:Technique)
+    (:MoC)-[:BELONGS_TO_PHASE]->(:Phase)
+
+Three tools:
+  • find_skill(query?, subdomain?, mitre_id?, tag?, tactic_id?, limit=20)
+      Relationship-aware discovery. AND-combined filters:
+        subdomain → IN_PHASE        e.g. 'active-directory'
+        tag       → TAGGED          e.g. 'kerberoasting'
+        mitre_id  → IMPLEMENTS to Technique.id (T1xxx or T1xxx.yyy)
+        tactic_id → IMPLEMENTS → HAS_TECHNIQUE to Tactic.id (TAxxxx)
+        query     → substring on name / description / when_to_use
+      Returns name, path, subdomain, description, matched_mitre, matched_tags.
+  • load_skill(name_or_path)
+      Fetch one SKILL.md's body + frontmatter. Accept a unique frontmatter
+      `name` (e.g. 'kerberoasting') or the canonical '/skills/.../SKILL.md' path.
+  • traverse(from_path, edge_types?, depth=2)
+      BFS from a Skill seed along the edge whitelist
+      (IN_PHASE, IMPLEMENTS, TAGGED, BELONGS_TO, RELATED_TO,
+       HAS_TECHNIQUE, HAS_SUBTECHNIQUE). depth ≤ 5.
+
+Workflow: find_skill to narrow candidates → load_skill on the chosen
+match. Use traverse for "what is related to this skill" questions.
+"""
+
+
+# Role → :Phase.name mapping. Threaded from ``build_middleware(role=...)``
+# through ``maybe_install_skillogy(role=role)`` to the middleware so the
+# per-phase MoC summary block stays scoped to the agent's actual phase.
+# Roles not in this map run without a phase block — they still get the
+# static schema cheat-sheet and the three tools.
+_PHASE_FOR_ROLE: dict[str, str] = {
+    "recon": "reconnaissance",
+    "exploit": "web-exploitation",
+    "postexploit": "post-exploit",
+    "ad_operator": "active-directory",
+    "cloud_hunter": "cloud",
+    "mobile_operator": "mobile",
+    "wireless_operator": "wireless",
+    "phisher": "phishing",
+    "analyst": "analyst",
+    "contract_auditor": "smart-contracts",
+    "reverser": "reverse-engineering",
+    "soundwave": "planning",
+    "decepticon": "orchestration",
+}
 
 
 def _resolve_neo4j_uri() -> str:
@@ -197,27 +252,97 @@ class SkillogyMiddleware(AgentMiddleware):
 
     Activation: set ``DECEPTICON_SKILL_BACKEND=skillogy_brain`` (preferred)
     or the legacy ``DECEPTICON_USE_SKILLOGY=1``. The agent factory's
-    ``maybe_install_skillogy`` swaps ``SkillsMiddleware`` for this class.
+    ``maybe_install_skillogy`` swaps ``SkillsMiddleware`` for this class
+    and threads the agent's role through so the per-phase MoC summary
+    fires for the correct phase.
+
+    The injected system-prompt block has two parts:
+
+    * **Static schema + 3-tool policy** (``_POLICY_PROMPT``) — graph
+      schema cheat-sheet so the agent understands what the
+      ``find_skill`` filters and the ``traverse`` whitelist actually
+      walk, plus the three-tool usage policy.
+    * **Dynamic phase context** (``_render_phase_block``) — built once
+      at ``__init__`` from a single ``query_moc_summary(phase)`` round
+      trip. The graph doesn't change at runtime, so we cache the
+      rendered block on the instance rather than re-querying every
+      request.
     """
 
     def __init__(
         self,
         *,
+        agent_phase: str | None = None,
         backend: Any = None,
         append_policy_to_system: bool = True,
     ) -> None:
         super().__init__()
         self._backend = backend or _backend_factory()
+        self._phase = agent_phase
         self._append_policy = append_policy_to_system
         self.tools = [
             _make_find_skill_tool(self._backend),
             _make_load_skill_tool(self._backend),
             _make_traverse_tool(self._backend),
         ]
+        # Render the phase block once at boot. Failures are non-fatal —
+        # the agent keeps the schema cheat-sheet and the three tools.
+        self._phase_block: str = self._render_phase_block() if self._phase else ""
 
     @classmethod
-    def from_env(cls) -> SkillogyMiddleware:
-        return cls()
+    def from_env(cls, *, agent_phase: str | None = None) -> SkillogyMiddleware:
+        return cls(agent_phase=agent_phase)
+
+    def _render_phase_block(self) -> str:
+        """Build the dynamic ``[Phase context]`` block for this agent's phase.
+
+        Returns an empty string when the backend lookup fails or the
+        phase has no MoCs registered yet (no point injecting a header
+        with no concept areas under it).
+        """
+        if not self._phase:
+            return ""
+        try:
+            mocs = self._backend.query_moc_summary(self._phase)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "skillogy MoC summary query failed for phase %r: %s",
+                self._phase,
+                exc,
+            )
+            return ""
+        if not mocs:
+            # Phase exists in the graph but has no MoCs yet — emit a
+            # one-liner so the agent knows the phase name to filter by,
+            # without a misleading empty bullet list.
+            return (
+                f"\n\n[Phase context]\n"
+                f"You are operating in phase: {self._phase}\n"
+                f"(no MoCs registered for this phase yet — "
+                f'use find_skill(subdomain="{self._phase}") to explore.)\n'
+            )
+        lines = [
+            "",
+            "",
+            "[Phase context]",
+            f"You are operating in phase: {self._phase}",
+            "",
+            "Concept areas (MoCs) in this phase — start with these:",
+        ]
+        for m in mocs:
+            name = m.get("name", "?")
+            desc = (m.get("description") or "").strip()
+            if desc:
+                lines.append(f"  • {name} — {desc}")
+            else:
+                lines.append(f"  • {name}")
+        lines.append("")
+        lines.append(
+            f'To enter a concept area: find_skill(subdomain="{self._phase}", tag="<moc>") '
+            f"or traverse() from any matching Skill."
+        )
+        lines.append("")
+        return "\n".join(lines)
 
     @override
     def wrap_model_call(self, request, handler):
@@ -230,13 +355,14 @@ class SkillogyMiddleware(AgentMiddleware):
     def _inject(self, request):
         if not self._append_policy:
             return request
+        injected_text = _POLICY_PROMPT + self._phase_block
         if request.system_message is not None:
             new_content = [
                 *request.system_message.content_blocks,
-                {"type": "text", "text": _POLICY_PROMPT},
+                {"type": "text", "text": injected_text},
             ]
         else:
-            new_content = [{"type": "text", "text": _POLICY_PROMPT}]
+            new_content = [{"type": "text", "text": injected_text}]
         new_system = SystemMessage(content=new_content)
         return request.override(system_message=new_system)
 
@@ -249,9 +375,18 @@ class SkillogyMiddleware(AgentMiddleware):
         return await handler(request)
 
 
-def maybe_install_skillogy(middleware_stack: list[Any]) -> list[Any]:
+def maybe_install_skillogy(middleware_stack: list[Any], *, role: str | None = None) -> list[Any]:
     """Substitute ``SkillogyMiddleware`` for ``SkillsMiddleware`` when the
     backend flag is set. Idempotent; swap-only (does not append).
+
+    Args:
+        middleware_stack: ordered middleware list from ``build_middleware``.
+        role: agent role (e.g. ``"recon"``) — resolved to its
+            ``:Phase.name`` via ``_PHASE_FOR_ROLE`` and threaded into the
+            new ``SkillogyMiddleware`` so its MoC summary block is scoped
+            to the agent's phase. ``None`` (or an unknown role) yields a
+            middleware with no phase block — the agent still gets the
+            schema cheat-sheet and the three tools.
     """
     if not _is_enabled():
         return middleware_stack
@@ -259,10 +394,11 @@ def maybe_install_skillogy(middleware_stack: list[Any]) -> list[Any]:
         from decepticon.middleware.skills import SkillsMiddleware  # noqa: PLC0415
     except ImportError:
         return middleware_stack
+    phase = _PHASE_FOR_ROLE.get(role) if role else None
     out: list[Any] = []
     for mw in middleware_stack:
         if isinstance(mw, SkillsMiddleware):
-            out.append(SkillogyMiddleware.from_env())
+            out.append(SkillogyMiddleware.from_env(agent_phase=phase))
         else:
             out.append(mw)
     return out
