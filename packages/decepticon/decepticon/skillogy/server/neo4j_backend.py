@@ -120,6 +120,134 @@ class Neo4jBackend:
         skill_count = 0 if result is None else int(result["skill_count"])
         return {"status": "ok", "skill_count": skill_count}
 
+    # ---- relationship-aware search (used by find_skill RPC) ----
+
+    def find_skill(
+        self,
+        *,
+        query: str | None = None,
+        subdomain: str | None = None,
+        mitre_id: str | None = None,
+        tag: str | None = None,
+        tactic_id: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Relationship-aware skill discovery.
+
+        Composable filters combined with AND semantics. Each filter
+        prunes the candidate set via a different edge:
+
+        - ``query``: substring match on name / description / when_to_use.
+          Cheap signal for when the agent has a keyword like "kerberoast"
+          but not a path.
+        - ``subdomain``: ``(s:Skill)-[:IN_PHASE]->(:Phase {name: $sub})``.
+        - ``mitre_id``: ``(s:Skill)-[:IMPLEMENTS]->(:Technique {id: $id})``
+          where ``$id`` can be a top-level T1xxx or a sub-T1xxx.yyy.
+        - ``tag``: ``(s:Skill)-[:TAGGED]->(:Tag {name: $tag})``.
+        - ``tactic_id``: anchors on a Tactic, follows ``HAS_TECHNIQUE`` to
+          its techniques, then back to skills via ``IMPLEMENTS``. Lets
+          the agent ask "show me skills covering Initial Access".
+
+        Returns each match's ``name``, ``path``, ``subdomain``,
+        ``description`` and the matched dimensions (``matched_mitre``,
+        ``matched_tags``) so the agent can see *why* a skill came back.
+        """
+        wheres: list[str] = []
+        params: dict[str, Any] = {"limit": int(min(max(limit, 1), 100))}
+        # Path A: subdomain-anchored
+        if subdomain:
+            wheres.append("(s)-[:IN_PHASE]->(:Phase {name: $subdomain})")
+            params["subdomain"] = subdomain
+        # Path B: tag-anchored
+        if tag:
+            wheres.append("(s)-[:TAGGED]->(:Tag {name: $tag})")
+            params["tag"] = tag
+        # Path C: technique-anchored (direct)
+        if mitre_id:
+            wheres.append("(s)-[:IMPLEMENTS]->(:Technique {id: $mitre_id})")
+            params["mitre_id"] = mitre_id
+        # Path D: tactic-anchored (one hop via Technique)
+        if tactic_id:
+            wheres.append(
+                "(s)-[:IMPLEMENTS]->(:Technique)<-[:HAS_TECHNIQUE]-(:Tactic {id: $tactic_id})"
+            )
+            params["tactic_id"] = tactic_id
+        # Path E: keyword search across name / description / triggers.
+        if query:
+            wheres.append(
+                "(toLower(s.name) CONTAINS toLower($query) "
+                "OR toLower(s.description) CONTAINS toLower($query) "
+                "OR toLower(s.when_to_use) CONTAINS toLower($query))"
+            )
+            params["query"] = query
+        if not wheres:
+            raise ValueError(
+                "find_skill requires at least one of: query, subdomain, mitre_id, tag, tactic_id"
+            )
+        match_clauses = " AND ".join(wheres)
+        cypher = (
+            "MATCH (s:Skill) "
+            f"WHERE {match_clauses} "
+            "OPTIONAL MATCH (s)-[:IMPLEMENTS]->(t:Technique) "
+            "OPTIONAL MATCH (s)-[:TAGGED]->(tag:Tag) "
+            "WITH s, collect(DISTINCT t.id) AS matched_mitre, "
+            "     collect(DISTINCT tag.name) AS matched_tags "
+            "RETURN s.name AS name, s.path AS path, s.subdomain AS subdomain, "
+            "       s.description AS description, "
+            "       matched_mitre, matched_tags "
+            "ORDER BY name "
+            "LIMIT $limit"
+        )
+        with self._driver.session(database=self._database, default_access_mode="READ") as session:
+            return [dict(record) for record in session.run(cypher, parameters=params)]
+
+    # ---- explicit graph traversal (used by traverse RPC) ----
+
+    def traverse(
+        self, from_path: str, edge_types: list[str] | None = None, depth: int = 2
+    ) -> list[dict[str, Any]]:
+        """Variable-length BFS from a Skill node along whitelisted edge types.
+
+        Returns the neighbouring nodes flattened, each with its
+        ``label``, key identifier, depth from the seed, and a string
+        representation of the connecting edge type.
+        """
+        depth = max(1, min(int(depth), 5))
+        # Default edge whitelist mirrors the spec §5.7.2 list.
+        whitelist = edge_types or [
+            "IN_PHASE",
+            "IMPLEMENTS",
+            "TAGGED",
+            "BELONGS_TO",
+            "RELATED_TO",
+            "HAS_TECHNIQUE",
+            "HAS_SUBTECHNIQUE",
+        ]
+        # Cypher relationship pattern: ``[r:A|B|C*1..N]``.
+        rel_pattern = f"[r:{'|'.join(whitelist)}*1..{depth}]"
+        cypher = (
+            "MATCH (seed:Skill {path: $from_path}) "
+            f"MATCH path = (seed)-{rel_pattern}-(neighbour) "
+            "RETURN labels(neighbour) AS labels, "
+            "       coalesce(neighbour.name, neighbour.id, neighbour.path) AS key, "
+            "       length(path) AS hop_depth, "
+            "       [rel IN relationships(path) | type(rel)] AS edge_chain "
+            "LIMIT $cap"
+        )
+        with self._driver.session(database=self._database, default_access_mode="READ") as session:
+            return [
+                {
+                    "labels": list(rec["labels"]),
+                    "key": rec["key"],
+                    "depth": int(rec["hop_depth"]),
+                    "edge_chain": list(rec["edge_chain"]),
+                }
+                for rec in session.run(
+                    cypher,
+                    parameters={"from_path": from_path, "cap": self._max_rows},
+                )
+            ]
+
     # ---- read-only cypher escape hatch (used by run_cypher_read RPC, Phase 1a) ----
 
     def run_cypher_read(
