@@ -50,10 +50,26 @@ def kgstore() -> Iterator[KGStore]:
     except Exception as exc:
         pytest.skip(f"KGStore construction failed: {exc}")
 
-    # Connectivity smoke. ``schema`` is the reserved label the runner
-    # uses, so re-using it here matches production behaviour.
+    # Connectivity smoke + result-shape sanity. ``schema`` is the
+    # reserved label the runner uses; re-using it matches production.
+    # The shape check catches CI environments where the ``neo4j`` driver
+    # is somehow stubbed (e.g. by an in-process mock that returns
+    # ``MagicMock`` for every Cypher call). Without this, those stubs
+    # silently pass the connectivity smoke and the integration tests
+    # then fail against a fake graph instead of skipping.
     try:
-        store.execute_read("RETURN 1 AS ok", {}, engagement="schema")
+        rows = store.execute_read("RETURN 1 AS ok", {}, engagement="schema")
+        if not (
+            isinstance(rows, list)
+            and len(rows) == 1
+            and isinstance(rows[0], dict)
+            and rows[0].get("ok") == 1
+        ):
+            raise RuntimeError(
+                f"Neo4j smoke returned an unexpected shape "
+                f"(type={type(rows).__name__}, len={len(rows) if hasattr(rows, '__len__') else 'N/A'}); "
+                f"the driver is probably stubbed."
+            )
     except Exception as exc:  # pragma: no cover — depends on live service
         store.close()
         pytest.skip(f"Neo4j not reachable for KG integration tests: {exc}")
