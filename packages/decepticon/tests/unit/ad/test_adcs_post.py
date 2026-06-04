@@ -27,6 +27,7 @@ class _FakeKGStore:
         dcsync_created: int = 1,
         golden_created: int = 1,
         esc1_created: int = 1,
+        esc3_created: int = 1,
         esc4_created: int = 1,
         esc6a_created: int = 1,
         esc6b_created: int = 1,
@@ -38,6 +39,7 @@ class _FakeKGStore:
         self._dcsync_created = dcsync_created
         self._golden_created = golden_created
         self._esc1_created = esc1_created
+        self._esc3_created = esc3_created
         self._esc4_created = esc4_created
         self._esc6a_created = esc6a_created
         self._esc6b_created = esc6b_created
@@ -65,6 +67,8 @@ class _FakeKGStore:
             return [{"created": self._esc9a_created}]
         if "ADCS_ESC9B" in query:
             return [{"created": self._esc9b_created}]
+        if "ADCS_ESC3" in query:
+            return [{"created": self._esc3_created}]
         if "ADCS_ESC4" in query:
             return [{"created": self._esc4_created}]
         if "ADCS_ESC1" in query:
@@ -96,6 +100,7 @@ class TestPublicSignatures:
             dcsync_created=3,
             golden_created=2,
             esc1_created=4,
+            esc3_created=11,
             esc4_created=5,
             esc6a_created=8,
             esc6b_created=9,
@@ -110,6 +115,7 @@ class TestPublicSignatures:
         assert stats.dcsync == 3
         assert stats.golden_cert == 2
         assert stats.adcs_esc1 == 4
+        assert stats.adcs_esc3 == 11
         assert stats.adcs_esc4 == 5
         assert stats.adcs_esc6a == 8
         assert stats.adcs_esc6b == 9
@@ -125,7 +131,7 @@ class TestPublicSignatures:
             source_episode_id="ep-x",
             created_by="adcs_post_test",
         )
-        assert len(store.calls) == 9
+        assert len(store.calls) == 10
         for _query, params, engagement in store.calls:
             assert engagement == "t-eng"
             assert params["engagement"] == "t-eng"
@@ -300,6 +306,76 @@ class TestAdcsEsc1Query:
         # so an analyst can trace the path back without re-running the
         # algorithm.
         assert "via_template" in q
+
+
+# ── ADCS ESC3 algorithm ─────────────────────────────────────────────
+
+
+class TestAdcsEsc3Query:
+    def _esc3_query(self, store: _FakeKGStore) -> str:
+        for q, _params, _engagement in store.calls:
+            if "ADCS_ESC3" in q:
+                return q
+        raise AssertionError("ESC3 query not issued")
+
+    def test_agent_template_filter_on_certificate_request_agent_oid(self) -> None:
+        store = _FakeKGStore()
+        synthesise_adcs_post(
+            engagement="t",
+            store=store,  # type: ignore[arg-type]
+        )
+        q = self._esc3_query(store)
+        # ESC3 requires the agent template's applicationpolicies to
+        # include the Certificate Request Agent EKU OID.
+        assert "1.3.6.1.4.1.311.20.2.1" in q
+        assert "agent.applicationpolicies" in q
+
+    def test_auth_template_filter(self) -> None:
+        store = _FakeKGStore()
+        synthesise_adcs_post(
+            engagement="t",
+            store=store,  # type: ignore[arg-type]
+        )
+        q = self._esc3_query(store)
+        # The chained authentication target template must be auth-
+        # enabled and manager-approval-free.
+        assert "auth.authenticationenabled = true" in q
+        assert "auth.requiresmanagerapproval" in q
+
+    def test_both_templates_published_by_same_ca(self) -> None:
+        store = _FakeKGStore()
+        synthesise_adcs_post(
+            engagement="t",
+            store=store,  # type: ignore[arg-type]
+        )
+        q = self._esc3_query(store)
+        # Both PUBLISHED_TO matches must land — the same CA publishes
+        # both the agent and auth templates.
+        assert q.count(":PUBLISHED_TO") == 2
+
+    def test_enroll_required_on_agent_template(self) -> None:
+        store = _FakeKGStore()
+        synthesise_adcs_post(
+            engagement="t",
+            store=store,  # type: ignore[arg-type]
+        )
+        q = self._esc3_query(store)
+        # Enroll right is required on the **agent** template — that's
+        # the one the principal uses to mint enrolment-agent certs.
+        assert "(p)-[en {engagement: $engagement}]->(agent)" in q
+        assert "bh_right = 'Enroll'" in q
+
+    def test_via_template_provenance_attached(self) -> None:
+        store = _FakeKGStore()
+        synthesise_adcs_post(
+            engagement="t",
+            store=store,  # type: ignore[arg-type]
+        )
+        q = self._esc3_query(store)
+        # Both template keys land on the synthesised edge so analysts
+        # can re-trace either side of the chain.
+        assert "via_agent_template" in q
+        assert "via_auth_template" in q
 
 
 # ── ADCS ESC4 algorithm ─────────────────────────────────────────────

@@ -44,6 +44,7 @@ class PostProcessStats:
     dcsync: int = 0
     golden_cert: int = 0
     adcs_esc1: int = 0
+    adcs_esc3: int = 0
     adcs_esc4: int = 0
     adcs_esc6a: int = 0
     adcs_esc6b: int = 0
@@ -137,6 +138,62 @@ _ADCS_ESC1_QUERY = (
     "              r.source_episode_id = $source_episode_id, "
     "              r.post_process_source = 'ESC1: vulnerable template + Enroll + PublishedTo', "
     "              r.via_template = ct.key, "
+    "              r._jc = true "
+    "ON MATCH SET r._jc = false "
+    "SET r.lastupdated = $now "
+    "WITH r, r._jc AS just_created "
+    "REMOVE r._jc "
+    "RETURN sum(CASE WHEN just_created THEN 1 ELSE 0 END) AS created"
+)
+
+
+# ADCS ESC3 — Certificate Request Agent / Enroll Agent abuse.
+#
+# A principal who can enrol an *agent template* (one whose
+# ``applicationpolicies`` includes the Certificate Request Agent OID
+# ``1.3.6.1.4.1.311.20.2.1``) can use the issued cert to enrol for
+# any *auth template* (one with ``authenticationenabled = true``)
+# **on behalf of** any AD principal. That gives them an
+# impersonation primitive against the CA's authentication surface.
+#
+# Pre-requisites in the raw graph:
+#   - Agent template (``agent``): the Certificate Request Agent OID
+#     is in its ``applicationpolicies`` list.
+#   - Auth template (``auth``): authentication-enabled + manager
+#     approval off.
+#   - The same EnterpriseCA publishes both templates.
+#   - Principal holds ``Enroll`` on the agent template.
+#
+# Edge: principal --ADCS_ESC3--> EnterpriseCA. Provenance attaches
+# both template keys.
+#
+# Simplification vs BHCE: the upstream algorithm additionally checks
+# ``hasenrollmentagentrestrictions = false`` on the EnterpriseCA
+# (without restrictions, any enrolment-agent cert holder can act as
+# anyone). We don't ingest that flag yet, so the check is implicit
+# — the false-positive risk is low because enrolment-agent
+# restrictions are typically set for high-value CAs only and any
+# such restrictions land as a CA-level filter we can add when
+# ``CARegistryData`` ingest support arrives.
+
+_ADCS_ESC3_QUERY = (
+    "MATCH (auth:ADCertTemplate {engagement: $engagement}) "
+    "WHERE auth.authenticationenabled = true "
+    "  AND coalesce(auth.requiresmanagerapproval, false) = false "
+    "MATCH (agent:ADCertTemplate {engagement: $engagement}) "
+    "WHERE '1.3.6.1.4.1.311.20.2.1' IN agent.applicationpolicies "
+    "MATCH (eca:ADEnterpriseCA {engagement: $engagement})-[:PUBLISHED_TO {engagement: $engagement}]->(auth) "
+    "MATCH (eca)-[:PUBLISHED_TO {engagement: $engagement}]->(agent) "
+    "MATCH (p)-[en {engagement: $engagement}]->(agent) "
+    "WHERE en.bh_right = 'Enroll' "
+    "WITH DISTINCT p, eca, auth, agent "
+    "MERGE (p)-[r:ADCS_ESC3 {engagement: $engagement}]->(eca) "
+    "ON CREATE SET r.firstseen = $now, "
+    "              r.created_by = $created_by, "
+    "              r.source_episode_id = $source_episode_id, "
+    "              r.post_process_source = 'ESC3: Enrollment Agent template + auth template + Enroll', "
+    "              r.via_agent_template = agent.key, "
+    "              r.via_auth_template = auth.key, "
     "              r._jc = true "
     "ON MATCH SET r._jc = false "
     "SET r.lastupdated = $now "
@@ -431,6 +488,20 @@ def synthesise_adcs_post(
         )
         if rows:
             stats.adcs_esc1 = int(rows[0].get("created") or 0)
+
+        # ADCS ESC3
+        rows = target_store.execute_write(
+            _ADCS_ESC3_QUERY,
+            {
+                "engagement": engagement,
+                "now": now,
+                "created_by": created_by,
+                "source_episode_id": source_episode_id,
+            },
+            engagement=engagement,
+        )
+        if rows:
+            stats.adcs_esc3 = int(rows[0].get("created") or 0)
 
         # ADCS ESC4
         rows = target_store.execute_write(
