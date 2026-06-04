@@ -1,134 +1,18 @@
-"""Tests for AD package: BloodHound import, Kerberos classification, ADCS, DCSync."""
+"""Tests for AD package: Kerberos classification, ADCS, DCSync.
+
+BloodHound ingest tests previously sat here and in
+``test_ad_bloodhound_tools.py`` against the legacy ``KnowledgeGraph``-
+based API. After ``bloodhound.py`` was rewritten to write directly
+through ``KGStore.record_observations`` (new ``engagement`` kwarg,
+no ``graph`` parameter), those tests no longer match the signature.
+They are reintroduced in a dedicated KGStore-mock-based test PR —
+see the BloodHound RFC §4.5.
+"""
 
 from __future__ import annotations
 
-import zipfile
-from pathlib import Path
-
-import pytest
-
-import decepticon.tools.ad.bloodhound as bh_mod
 from decepticon.tools.ad.adcs import analyze_adcs_templates
-from decepticon.tools.ad.dcsync import dcsync_candidates
 from decepticon.tools.ad.kerberos import classify_hashcat_hash, parse_ticket
-from decepticon_core.types.kg import KnowledgeGraph
-
-
-class TestBloodHoundIngest:
-    def test_imports_users_with_aces(self) -> None:
-        bh = {
-            "meta": {"type": "users"},
-            "data": [
-                {
-                    "ObjectIdentifier": "S-1-5-21-1-1-1-500",
-                    "Properties": {
-                        "name": "admin@corp.local",
-                        "admincount": True,
-                        "hasspn": True,
-                    },
-                    "Aces": [{"RightName": "GenericAll", "PrincipalSID": "S-1-5-21-1-1-1-1106"}],
-                }
-            ],
-        }
-        g = KnowledgeGraph()
-        stats = bh_mod.merge_bloodhound_json(bh, g)
-        assert stats.users == 1
-        assert stats.edges >= 1
-
-    def test_empty_array_produces_zero_stats(self) -> None:
-        """BH CE format: top-level array is valid (JSONL items)."""
-        g = KnowledgeGraph()
-        stats = bh_mod.merge_bloodhound_json("[]", g)
-        assert stats.users == 0
-
-    def test_rejects_top_level_scalar(self) -> None:
-        import pytest
-
-        g = KnowledgeGraph()
-        with pytest.raises(ValueError, match="top level"):
-            bh_mod.merge_bloodhound_json("42", g)
-
-    def test_rejects_invalid_json(self) -> None:
-        import pytest
-
-        g = KnowledgeGraph()
-        with pytest.raises(ValueError, match="invalid JSON"):
-            bh_mod.merge_bloodhound_json("{not json", g)
-
-    def test_rejects_non_array_data_field(self) -> None:
-        import pytest
-
-        g = KnowledgeGraph()
-        with pytest.raises(ValueError, match="'data'/'items' must be an array"):
-            bh_mod.merge_bloodhound_json({"meta": {"type": "users"}, "data": "oops"}, g)
-
-    def test_missing_meta_is_tolerated(self) -> None:
-        # Historical behavior: meta is optional. Verify it still works
-        # and doesn't crash on the new shape-check path.
-        g = KnowledgeGraph()
-        stats = bh_mod.merge_bloodhound_json(
-            {
-                "data": [
-                    {
-                        "ObjectIdentifier": "S-1-5-21-1-1-1-500",
-                        "Properties": {"name": "admin@corp.local"},
-                    }
-                ]
-            },
-            g,
-        )
-        assert stats.users == 1
-
-    def test_zip_bomb_oversized_entry_is_skipped(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        monkeypatch.setattr(bh_mod, "_MAX_ENTRY_SIZE", 100)
-
-        content = b'{"meta":{"type":"users"},"data":[]}' + b"x" * 200
-        zip_path = tmp_path / "test.zip"
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
-            zf.writestr("users.json", content)
-
-        g = KnowledgeGraph()
-        stats = bh_mod.ingest_bloodhound_zip(zip_path, g)
-        assert stats.users == 0
-
-    def test_domains_stat_accumulated_from_list(self) -> None:
-        payload = [
-            {
-                "meta": {"type": "domains"},
-                "data": [
-                    {
-                        "ObjectIdentifier": "S-1-5-21-9-9-9-0",
-                        "Properties": {"name": "corp.local"},
-                    }
-                ],
-            }
-        ]
-        g = KnowledgeGraph()
-        stats = bh_mod.merge_bloodhound_json(payload, g)
-        assert stats.domains > 0
-
-    def test_dcsync_detection(self) -> None:
-        bh = {
-            "meta": {"type": "users"},
-            "data": [
-                {
-                    "ObjectIdentifier": "S-1-5-21-1-1-1-1106",
-                    "Properties": {"name": "svcadmin@corp.local"},
-                    "Aces": [
-                        {"RightName": "GetChanges", "PrincipalSID": "S-1-5-21-1-1-1-1107"},
-                        {
-                            "RightName": "GetChangesAll",
-                            "PrincipalSID": "S-1-5-21-1-1-1-1107",
-                        },
-                    ],
-                }
-            ],
-        }
-        g = KnowledgeGraph()
-        bh_mod.merge_bloodhound_json(bh, g)
-        assert len(dcsync_candidates(g)) == 1
 
 
 class TestKerberos:

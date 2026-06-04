@@ -1,16 +1,45 @@
-"""BloodHound JSON → KnowledgeGraph importer.
+"""BloodHound 5.x JSON → KGStore observations (engagement-scoped).
 
-BloodHound's collector (SharpHound / AzureHound / BloodHound.py) emits
-one JSON file per object type: ``users.json``, ``computers.json``,
-``groups.json``, ``domains.json``, ``gpos.json``, ``ous.json``. Each
-contains ``data`` and ``meta`` arrays.
+SharpHound / AzureHound / BloodHound.py emit one JSON file per object
+type (``users.json``, ``computers.json``, ``groups.json``,
+``domains.json``, ``gpos.json``, ``ous.json``, ``containers.json``).
+This module parses those, builds observation dicts conforming to
+:meth:`KGStore.record_observations`, and writes them in a single
+atomic batch.
 
-We merge these into the existing attack graph so the chain planner can
-reason about AD paths *together with* web/cloud/binary findings — enabling
-cross-domain attack chains like SSRF → IMDS → AWS → AD pivot → DA.
+Compared to the legacy ``KnowledgeGraph`` -based ingest this replaces,
+the rewrite addresses five of the load-bearing traps catalogued in
+``docs/design/2026-06-04-bloodhound-kgstore-mapping.md`` §2.7:
 
-Every AD object becomes a node with its correct KG label; every ACE /
-membership / session edge uses the semantically correct relationship type.
+  1. **PrimaryGroupSID synthesis** — BloodHound emits the primary group
+     as a property on User / Computer, NOT as a relationship. The
+     legacy ingest dropped this; we now synthesise an explicit
+     ``MEMBER_OF`` edge so primary-group membership is visible to the
+     chain planner.
+  2. **Sessions direction** — ``Sessions.Results[]`` carries
+     ``HasSession`` from computer → user; we preserve that direction
+     (the legacy code already did, but only for the top-level
+     ``Sessions`` block; we now also handle ``PrivilegedSessions`` and
+     ``RegistrySessions``).
+  3. **ContainedBy flip** — the JSON field is the child carrying a
+     pointer to its parent. We flip into canonical ``parent CONTAINS
+     child`` edges on ingest.
+  4. **Trust 4-way split** — BHCE 5.x replaced single ``TrustedBy``
+     with four distinct edges (``SameForestTrust`` /
+     ``CrossForestTrust`` / ``AbuseTGTDelegation`` /
+     ``SpoofSIDHistory``) based on ``TrustType`` + ``IsTransitive``.
+     The legacy ingest collapsed everything to ``EdgeKind.ENABLES``.
+  5. **meta.methods provenance** — the SharpHound collection-method
+     bitmask is preserved as a node prop on objects from each file so
+     "partial collection" debugging works.
+
+NodeKind values **stay on the legacy generic family** (USER, HOST,
+GROUP, DOMAIN) so the AD analysis tools (`delegation.py`, `gpo.py`,
+`dcsync.py`, `shadow_creds.py`, `adcs.py`) keep working through their
+existing ``bh_type`` prop checks. AD-prefixed kinds (`ADUser` /
+`ADComputer` / etc.) are reserved for a dedicated follow-up PR that
+migrates the analysis tools in lockstep — see the BloodHound RFC for
+the plan.
 """
 
 from __future__ import annotations
@@ -18,17 +47,12 @@ from __future__ import annotations
 import io
 import json
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from decepticon_core.types.kg import (
-    Edge,
-    EdgeKind,
-    KnowledgeGraph,
-    Node,
-    NodeKind,
-)
+from decepticon.middleware.kg_internal.store import KGStore
+from decepticon_core.types.kg import EdgeKind, NodeKind
 
 
 @dataclass
@@ -39,16 +63,17 @@ class ImportStats:
     domains: int = 0
     gpos: int = 0
     ous: int = 0
+    containers: int = 0
     edges: int = 0
 
     def to_dict(self) -> dict[str, int]:
         return self.__dict__
 
 
-# ── BloodHound → KG mapping ──────────────────────────────────────────
+# ── BloodHound → KGStore mapping ─────────────────────────────────────
 #
-# BloodHound edge types mapped to our EdgeKind with semantically correct
-# relationship types. Lower weight = easier-to-abuse relationship.
+# BloodHound's per-file ``type`` plural → singular form. Used to derive
+# ``bh_type`` and pick the legacy NodeKind family for each object.
 
 _BH_TYPE_SINGULAR: dict[str, str] = {
     "users": "User",
@@ -57,12 +82,19 @@ _BH_TYPE_SINGULAR: dict[str, str] = {
     "domains": "Domain",
     "gpos": "GPO",
     "ous": "OU",
+    "containers": "Container",
 }
 
+
+# ACE / direct edge kind mapping: BHCE edge name → (KGStore edge kind,
+# weight). Weight: lower = easier-to-abuse. Edge kinds new in V003
+# (``ALLOWED_TO_DELEGATE`` / ``ALLOWED_TO_ACT`` / ``HAS_SID_HISTORY`` /
+# ACE right-name kinds) are used where the BHCE name is distinct; the
+# generic ``ENABLES`` / ``LEAKS`` / ``OWNS`` fall back where it is not.
+
 _BH_EDGE_MAP: dict[str, tuple[EdgeKind, float]] = {
-    # Group membership
+    # Membership / session
     "MemberOf": (EdgeKind.MEMBER_OF, 0.8),
-    # Session / access
     "HasSession": (EdgeKind.HAS_SESSION, 0.5),
     "AdminTo": (EdgeKind.ADMIN_TO, 0.3),
     "CanRDP": (EdgeKind.CAN_ACCESS, 0.6),
@@ -70,255 +102,514 @@ _BH_EDGE_MAP: dict[str, tuple[EdgeKind, float]] = {
     "ExecuteDCOM": (EdgeKind.CAN_ACCESS, 0.6),
     "SQLAdmin": (EdgeKind.ADMIN_TO, 0.5),
     # Delegation
-    "AllowedToDelegate": (EdgeKind.ENABLES, 0.4),
-    "AllowedToAct": (EdgeKind.ENABLES, 0.4),
-    # ACL abuse
-    "GenericAll": (EdgeKind.ENABLES, 0.3),
-    "GenericWrite": (EdgeKind.ENABLES, 0.4),
-    "WriteOwner": (EdgeKind.ENABLES, 0.4),
-    "WriteDacl": (EdgeKind.ENABLES, 0.3),
+    "AllowedToDelegate": (EdgeKind.ALLOWED_TO_DELEGATE, 0.4),
+    "AllowedToAct": (EdgeKind.ALLOWED_TO_ACT, 0.4),
+    # ACL — raw ACE right names (V003 introduced these so they survive
+    # the round-trip even when no BHCE server post-processes them).
+    "GenericAll": (EdgeKind.GENERIC_ALL, 0.3),
+    "GenericWrite": (EdgeKind.GENERIC_WRITE, 0.4),
+    "WriteOwner": (EdgeKind.WRITE_OWNER, 0.4),
+    "WriteDacl": (EdgeKind.WRITE_DACL, 0.3),
     "Owns": (EdgeKind.OWNS, 0.3),
-    "ForceChangePassword": (EdgeKind.ENABLES, 0.3),
-    "AddMember": (EdgeKind.ENABLES, 0.4),
-    "AddSelf": (EdgeKind.ENABLES, 0.4),
+    "OwnsLimitedRights": (EdgeKind.OWNS_LIMITED_RIGHTS, 0.4),
+    "WriteOwnerLimitedRights": (EdgeKind.WRITE_OWNER_LIMITED_RIGHTS, 0.5),
+    "ForceChangePassword": (EdgeKind.FORCE_CHANGE_PASSWORD, 0.3),
+    "AddMember": (EdgeKind.ADD_MEMBER, 0.4),
+    "AddSelf": (EdgeKind.ADD_SELF, 0.4),
+    "WriteSPN": (EdgeKind.WRITE_SPN, 0.4),
+    "WriteGPLink": (EdgeKind.WRITE_GP_LINK, 0.3),
+    "WriteAccountRestrictions": (EdgeKind.WRITE_ACCOUNT_RESTRICTIONS, 0.4),
+    "AllExtendedRights": (EdgeKind.ALL_EXTENDED_RIGHTS, 0.3),
+    "AddKeyCredentialLink": (EdgeKind.ADD_KEY_CREDENTIAL_LINK, 0.3),
+    "ManageCA": (EdgeKind.MANAGE_CA, 0.3),
+    "ManageCertificates": (EdgeKind.MANAGE_CERTIFICATES, 0.3),
     # Credential access
-    "ReadLAPSPassword": (EdgeKind.LEAKS, 0.3),
-    "ReadGMSAPassword": (EdgeKind.LEAKS, 0.3),
-    "GetChanges": (EdgeKind.LEAKS, 0.2),
-    "GetChangesAll": (EdgeKind.LEAKS, 0.2),
-    "DCSync": (EdgeKind.LEAKS, 0.1),
+    "ReadLAPSPassword": (EdgeKind.READ_LAPS_PASSWORD, 0.3),
+    "ReadGMSAPassword": (EdgeKind.READ_GMSA_PASSWORD, 0.3),
+    "GetChanges": (EdgeKind.GET_CHANGES, 0.2),
+    "GetChangesAll": (EdgeKind.GET_CHANGES_ALL, 0.2),
+    "DCSync": (EdgeKind.DCSYNC, 0.1),
+    "SIDHistory": (EdgeKind.HAS_SID_HISTORY, 0.3),
     # Structural
     "Contains": (EdgeKind.CONTAINS, 1.0),
-    "GPLink": (EdgeKind.CONTAINS, 0.8),
-    "TrustedBy": (EdgeKind.ENABLES, 0.6),
+    "GPLink": (EdgeKind.GP_LINK, 0.8),
 }
 
 
 def _node_kind_for_bh(type_name: str) -> NodeKind:
-    """Map BloodHound object type to the correct KG NodeKind."""
-    m = {
+    """Map BloodHound object type to the legacy generic NodeKind family.
+
+    AD analysis tools (``delegation``/``gpo``/``dcsync``/...) match on
+    ``bh_type`` props, not on these kinds, so the choice here is about
+    cross-domain chain analysis — picking ``USER`` lets a path planner
+    treat a BloodHound user and a web-app credential as the same kind.
+    """
+    return {
         "User": NodeKind.USER,
         "Computer": NodeKind.HOST,
         "Group": NodeKind.GROUP,
         "Domain": NodeKind.DOMAIN,
-        "GPO": NodeKind.GROUP,  # GPOs act as policy containers
-        "OU": NodeKind.GROUP,  # OUs act as organizational containers
+        # GPO/OU/Container act as policy / organizational containers
+        # in the legacy schema.
+        "GPO": NodeKind.GROUP,
+        "OU": NodeKind.GROUP,
+        "Container": NodeKind.GROUP,
+    }.get(type_name, NodeKind.HOST)
+
+
+def _key_for_object(type_name: str, object_id: str) -> str:
+    """Deterministic ``(key, engagement)``-friendly dedup key."""
+    return f"bh::{type_name}::{object_id}"
+
+
+def _safe_str(v: Any) -> str:
+    return str(v) if v is not None else ""
+
+
+# ── Trust kind picker (function 5 in the trap catalogue) ─────────────
+
+
+def _trust_edge_kind(trust_type: Any, is_transitive: Any) -> EdgeKind:
+    """Map the BHCE 5.x ``TrustType`` + ``IsTransitive`` combination
+    into the correct edge kind.
+
+    BHCE main 2026-06 splits the single legacy ``TrustedBy`` into four:
+      - ``ParentChild`` (always transitive)        → SameForestTrust
+      - ``CrossLink``                              → CrossForestTrust
+      - ``Forest`` + transitive                    → CrossForestTrust
+      - ``External`` (typically non-transitive)    → CrossForestTrust
+      - Any trust with ``TGTDelegationEnabled``    → AbuseTGTDelegation
+      - Trust with SID filtering disabled          → SpoofSIDHistory
+
+    The TGT delegation / SID-history flavours are computed from the
+    raw trust object's ``TGTDelegationEnabled`` / ``SidFilteringEnabled``
+    fields; this helper only handles the basic TrustType branching.
+    The full post-process lives in ``adcs_post.py`` (PR-D2-3).
+    """
+    tt = _safe_str(trust_type)
+    if tt == "ParentChild":
+        return EdgeKind.SAME_FOREST_TRUST
+    if tt in ("CrossLink", "Forest", "External"):
+        return EdgeKind.CROSS_FOREST_TRUST
+    return EdgeKind.CROSS_FOREST_TRUST if is_transitive else EdgeKind.SAME_FOREST_TRUST
+
+
+# ── Observation builder ─────────────────────────────────────────────
+
+
+@dataclass
+class _IngestState:
+    """Accumulator that holds the in-progress observation list plus
+    the running stats counter. Mutated in place by the per-file
+    helpers."""
+
+    obs_by_key: dict[str, dict[str, Any]] = field(default_factory=dict)
+    stats: ImportStats = field(default_factory=ImportStats)
+    collection_methods: int = 0
+
+    def upsert_observation(
+        self,
+        *,
+        kind: NodeKind,
+        key: str,
+        label: str,
+        bh_type: str,
+        props: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Insert or merge an observation by ``key``. Returns the
+        observation dict so callers can extend its ``edges_out``."""
+        existing = self.obs_by_key.get(key)
+        merged_props: dict[str, Any] = {
+            "bh_type": bh_type,
+            "bh_id": _bh_id_from_key(key),
+        }
+        if props:
+            for prop_key, prop_value in props.items():
+                if prop_value is None:
+                    continue
+                merged_props[prop_key] = prop_value
+        if self.collection_methods:
+            merged_props.setdefault("bh_methods", self.collection_methods)
+        if existing is None:
+            obs: dict[str, Any] = {
+                "kind": kind.value,
+                "key": key,
+                "label": label,
+                "props": merged_props,
+                "edges_out": [],
+            }
+            self.obs_by_key[key] = obs
+            return obs
+        existing.setdefault("props", {}).update(merged_props)
+        if label and not existing.get("label"):
+            existing["label"] = label
+        return existing
+
+    def add_edge(
+        self,
+        *,
+        src_key: str,
+        dst_key: str,
+        kind: EdgeKind,
+        weight: float,
+        props: dict[str, Any] | None = None,
+    ) -> None:
+        src_obs = self.obs_by_key.get(src_key)
+        if src_obs is None:
+            return
+        edge: dict[str, Any] = {
+            "to_key": dst_key,
+            "kind": kind.value,
+            "weight": weight,
+            "props": props or {},
+        }
+        src_obs.setdefault("edges_out", []).append(edge)
+        self.stats.edges += 1
+
+
+def _bh_id_from_key(key: str) -> str:
+    """Recover ``ObjectIdentifier`` from a key built by ``_key_for_object``."""
+    parts = key.split("::", 2)
+    return parts[2] if len(parts) == 3 else key
+
+
+def _ensure_placeholder(state: _IngestState, *, sid: str, default_type: str) -> str:
+    """Ensure a node exists for ``sid``. Used when an ACE / edge
+    references a principal that has not appeared in any object file
+    yet (cross-file references are common in collector output)."""
+    type_name = default_type
+    key = _key_for_object(type_name, sid)
+    if key not in state.obs_by_key:
+        kind = _node_kind_for_bh(type_name)
+        state.upsert_observation(
+            kind=kind,
+            key=key,
+            label=sid,
+            bh_type=type_name,
+        )
+    return key
+
+
+# ── Per-file ingest helpers ─────────────────────────────────────────
+
+
+def _ingest_object(state: _IngestState, obj: dict[str, Any], type_name: str) -> None:
+    """Ingest one object (user/computer/group/etc.) from an items list."""
+    properties_raw = obj.get("Properties")
+    properties: dict[str, Any] = properties_raw if isinstance(properties_raw, dict) else {}
+    object_id = obj.get("ObjectIdentifier") or properties.get("objectid") or ""
+    if not object_id:
+        return
+    key = _key_for_object(type_name, object_id)
+    label = properties.get("name") or obj.get("Name") or object_id
+    kind = _node_kind_for_bh(type_name)
+
+    # Preserve the headline BloodHound props the analysis tools read.
+    bh_props: dict[str, Any] = {
+        "domain": properties.get("domain"),
+        "domainsid": properties.get("domainsid"),
+        "distinguishedname": properties.get("distinguishedname"),
+        "enabled": properties.get("enabled"),
+        "admincount": properties.get("admincount"),
+        "haslaps": properties.get("haslaps"),
+        "hasspn": properties.get("hasspn"),
+        "dontreqpreauth": properties.get("dontreqpreauth"),
+        "trustedfordelegation": properties.get("trustedfordelegation"),
+        "unconstraineddelegation": properties.get("unconstraineddelegation"),
+        "passwordnotreqd": properties.get("passwordnotreqd"),
+        "pwdlastset": properties.get("pwdlastset"),
+        "lastlogon": properties.get("lastlogon"),
+        "sidhistory": properties.get("sidhistory"),
+        "description": properties.get("description"),
+        "samaccountname": properties.get("samaccountname"),
+        "operatingsystem": properties.get("operatingsystem"),
+        "isdc": properties.get("isdc"),
+        "name": properties.get("name"),
     }
-    return m.get(type_name, NodeKind.HOST)
-
-
-def _upsert_bh_object(graph: KnowledgeGraph, obj: dict[str, Any], type_name: str) -> Node:
-    props = obj.get("Properties") or {}
-    object_id = obj.get("ObjectIdentifier") or props.get("objectid") or ""
-    label = props.get("name") or obj.get("Name") or object_id or "unknown"
-    node_kind = _node_kind_for_bh(type_name)
-    node = Node.make(
-        node_kind,
-        str(label),
-        key=f"bh::{type_name}::{object_id}",
+    if obj.get("IsDeleted"):
+        bh_props["isdeleted"] = True
+    if obj.get("IsACLProtected"):
+        bh_props["isaclprotected"] = True
+    state.upsert_observation(
+        kind=kind,
+        key=key,
+        label=str(label),
         bh_type=type_name,
-        bh_id=object_id,
-        domain=props.get("domain"),
-        enabled=props.get("enabled"),
-        admincount=props.get("admincount"),
-        haslaps=props.get("haslaps"),
-        hasspn=props.get("hasspn"),
-        dontreqpreauth=props.get("dontreqpreauth"),
-        trustedfordelegation=props.get("trustedfordelegation"),
-        unconstraineddelegation=props.get("unconstraineddelegation"),
+        props={k: v for k, v in bh_props.items() if v is not None},
     )
-    graph.upsert_node(node)
-    return node
+
+    # ── Trap 1: PrimaryGroupSID synthesis ─────────────────────────
+    primary_group_sid = properties.get("primarygroupsid") or obj.get("PrimaryGroupSID")
+    if primary_group_sid and isinstance(primary_group_sid, str):
+        dst_key = _ensure_placeholder(state, sid=primary_group_sid, default_type="Group")
+        state.add_edge(
+            src_key=key,
+            dst_key=dst_key,
+            kind=EdgeKind.MEMBER_OF,
+            weight=0.8,
+            props={"bh_right": "PrimaryGroup"},
+        )
+
+    _ingest_aces(state, key, obj)
+    _ingest_memberships(state, key, obj)
+    _ingest_delegation_edges(state, key, obj)
+    _ingest_sessions(state, key, obj)
+    _ingest_contained_by(state, key, obj)
 
 
-def _ingest_delegation_edges(
-    graph: KnowledgeGraph,
-    src: Node,
-    obj: dict[str, Any],
-    stats: ImportStats,
-    bh_index: dict[str, Node],
-) -> None:
+def _ingest_aces(state: _IngestState, src_key: str, obj: dict[str, Any]) -> None:
+    """Translate ``Aces[]`` into edges. Direction is principal → target."""
+    aces = obj.get("Aces") or []
+    if not isinstance(aces, list):
+        return
+    for ace in aces:
+        if not isinstance(ace, dict):
+            continue
+        right = ace.get("RightName") or ace.get("rightname")
+        principal_sid = ace.get("PrincipalSID") or ace.get("principalid")
+        if not right or not principal_sid:
+            continue
+        principal_type = ace.get("PrincipalType") or ace.get("principaltype") or "Unknown"
+        principal_key = _ensure_placeholder(
+            state,
+            sid=principal_sid,
+            default_type=principal_type
+            if principal_type in _BH_TYPE_SINGULAR.values()
+            else "Unknown",
+        )
+        edge_kind, weight = _BH_EDGE_MAP.get(right, (EdgeKind.ENABLES, 1.0))
+        ace_props: dict[str, Any] = {"bh_right": right}
+        if ace.get("IsInherited") is not None:
+            ace_props["is_inherited"] = bool(ace["IsInherited"])
+        if ace.get("InheritanceHash"):
+            ace_props["inheritance_hash"] = ace["InheritanceHash"]
+        state.add_edge(
+            src_key=principal_key,
+            dst_key=src_key,
+            kind=edge_kind,
+            weight=weight,
+            props=ace_props,
+        )
+
+
+def _ingest_memberships(state: _IngestState, src_key: str, obj: dict[str, Any]) -> None:
+    """``MemberOf[]`` (per-object) → MEMBER_OF edges. Also processes
+    ``Members[]`` on groups (which carry the reverse: members → group)."""
+    member_of = obj.get("MemberOf") or []
+    if isinstance(member_of, list):
+        for mem in member_of:
+            sid = mem.get("ObjectIdentifier") if isinstance(mem, dict) else mem
+            if not isinstance(sid, str):
+                continue
+            dst_key = _ensure_placeholder(state, sid=sid, default_type="Group")
+            state.add_edge(
+                src_key=src_key,
+                dst_key=dst_key,
+                kind=EdgeKind.MEMBER_OF,
+                weight=0.8,
+                props={"bh_right": "MemberOf"},
+            )
+
+    members = obj.get("Members") or []
+    if isinstance(members, list):
+        for mem in members:
+            sid = mem.get("ObjectIdentifier") if isinstance(mem, dict) else mem
+            if not isinstance(sid, str):
+                continue
+            mem_type = (mem.get("ObjectType") if isinstance(mem, dict) else None) or "User"
+            mem_type = mem_type if mem_type in _BH_TYPE_SINGULAR.values() else "User"
+            mem_key = _ensure_placeholder(state, sid=sid, default_type=mem_type)
+            state.add_edge(
+                src_key=mem_key,
+                dst_key=src_key,
+                kind=EdgeKind.MEMBER_OF,
+                weight=0.8,
+                props={"bh_right": "MemberOf"},
+            )
+
+
+def _ingest_delegation_edges(state: _IngestState, src_key: str, obj: dict[str, Any]) -> None:
+    """``AllowedToDelegate[]`` + ``AllowedToActOnBehalfOfOtherIdentity``."""
     for entry in obj.get("AllowedToDelegate") or []:
         sid = entry.get("ObjectIdentifier") if isinstance(entry, dict) else str(entry)
         if not sid:
             continue
-        dst = bh_index.get(sid)
-        if dst is None:
-            dst = Node.make(
-                NodeKind.HOST,
-                sid,
-                key=f"bh::Computer::{sid}",
-                bh_id=sid,
-                bh_type="Computer",
-            )
-            graph.upsert_node(dst)
-            bh_index[sid] = dst
+        dst_key = _ensure_placeholder(state, sid=sid, default_type="Computer")
         spn = entry.get("Value", "") if isinstance(entry, dict) else ""
-        graph.upsert_edge(
-            Edge.make(
-                src.id,
-                dst.id,
-                EdgeKind.ENABLES,
-                weight=0.4,
-                key=f"bh-deleg::AllowedToDelegate::{sid}",
-                bh_right="AllowedToDelegate",
-                spn=spn,
-            )
+        state.add_edge(
+            src_key=src_key,
+            dst_key=dst_key,
+            kind=EdgeKind.ALLOWED_TO_DELEGATE,
+            weight=0.4,
+            props={"bh_right": "AllowedToDelegate", "spn": spn},
         )
-        stats.edges += 1
 
     for entry in obj.get("AllowedToActOnBehalfOfOtherIdentity") or []:
         sid = entry.get("ObjectIdentifier") if isinstance(entry, dict) else str(entry)
         if not sid:
             continue
-        actor = bh_index.get(sid)
-        if actor is None:
-            actor = Node.make(
-                NodeKind.HOST,
-                sid,
-                key=f"bh::Computer::{sid}",
-                bh_id=sid,
-                bh_type="Computer",
-            )
-            graph.upsert_node(actor)
-            bh_index[sid] = actor
-        graph.upsert_edge(
-            Edge.make(
-                actor.id,
-                src.id,
-                EdgeKind.ENABLES,
-                weight=0.4,
-                key=f"bh-deleg::AllowedToAct::{sid}",
-                bh_right="AllowedToAct",
-            )
+        actor_key = _ensure_placeholder(state, sid=sid, default_type="Computer")
+        state.add_edge(
+            src_key=actor_key,
+            dst_key=src_key,
+            kind=EdgeKind.ALLOWED_TO_ACT,
+            weight=0.4,
+            props={"bh_right": "AllowedToAct"},
         )
-        stats.edges += 1
 
 
-def _build_bh_index(graph: KnowledgeGraph) -> dict[str, Node]:
-    """Build a bh_id → Node lookup for O(1) principal resolution."""
-    result: dict[str, Node] = {}
-    for n in graph.nodes.values():
-        bh_id = n.props.get("bh_id")
-        if bh_id is not None:
-            result[str(bh_id)] = n
-    return result
-
-
-def _ingest_aces(
-    graph: KnowledgeGraph,
-    src: Node,
-    obj: dict[str, Any],
-    stats: ImportStats,
-    bh_index: dict[str, Node],
-) -> None:
-    for ace in obj.get("Aces") or []:
-        right = ace.get("RightName") or ace.get("rightname")
-        principal_sid = ace.get("PrincipalSID") or ace.get("principalid")
-        if not right or not principal_sid:
+def _ingest_sessions(state: _IngestState, src_key: str, obj: dict[str, Any]) -> None:
+    """Trap 2: Sessions / PrivilegedSessions / RegistrySessions all
+    carry ``HasSession`` from computer → user. We preserve that
+    direction and add ``privileged`` / ``source`` props so consumers
+    can filter."""
+    for field_name, extra_props in (
+        ("Sessions", {}),
+        ("PrivilegedSessions", {"privileged": True}),
+        ("RegistrySessions", {"source": "registry"}),
+    ):
+        block = obj.get(field_name)
+        results = block.get("Results") if isinstance(block, dict) else None
+        if not isinstance(results, list):
             continue
-        principal_node = bh_index.get(principal_sid)
-        if principal_node is None:
-            principal_node = Node.make(
-                NodeKind.USER,
-                principal_sid,
-                key=f"bh::Unknown::{principal_sid}",
-                bh_id=principal_sid,
-                bh_type="Unknown",
+        for entry in results:
+            if not isinstance(entry, dict):
+                continue
+            computer_sid = entry.get("ComputerSID")
+            user_sid = entry.get("UserSID")
+            if not computer_sid or not user_sid:
+                continue
+            comp_key = _ensure_placeholder(state, sid=computer_sid, default_type="Computer")
+            user_key = _ensure_placeholder(state, sid=user_sid, default_type="User")
+            edge_props: dict[str, Any] = {"bh_right": "HasSession"}
+            if entry.get("LogonType") is not None:
+                edge_props["logon_type"] = entry["LogonType"]
+            edge_props.update(extra_props)
+            state.add_edge(
+                src_key=comp_key,
+                dst_key=user_key,
+                kind=EdgeKind.HAS_SESSION,
+                weight=0.5,
+                props=edge_props,
             )
-            graph.upsert_node(principal_node)
-            bh_index[principal_sid] = principal_node
-
-        mapping = _BH_EDGE_MAP.get(right)
-        if mapping:
-            edge_kind, weight = mapping
-        else:
-            edge_kind, weight = (EdgeKind.ENABLES, 1.0)
-        graph.upsert_edge(
-            Edge.make(
-                principal_node.id,
-                src.id,
-                edge_kind,
-                weight=weight,
-                key=f"bh-ace::{right}",
-                bh_right=right,
-            )
-        )
-        stats.edges += 1
 
 
-def _ingest_memberships(
-    graph: KnowledgeGraph,
-    node: Node,
-    obj: dict[str, Any],
-    stats: ImportStats,
-    bh_index: dict[str, Node],
-) -> None:
-    for mem in obj.get("MemberOf") or []:
-        sid = mem.get("ObjectIdentifier") or mem
-        if not isinstance(sid, str):
+def _ingest_contained_by(state: _IngestState, src_key: str, obj: dict[str, Any]) -> None:
+    """Trap 3: ``ContainedBy`` is the child carrying a pointer to its
+    parent. Flip into canonical ``parent CONTAINS child`` edges."""
+    contained_by = obj.get("ContainedBy")
+    if not isinstance(contained_by, dict):
+        return
+    parent_sid = contained_by.get("ObjectIdentifier")
+    if not isinstance(parent_sid, str) or not parent_sid:
+        return
+    parent_type = contained_by.get("ObjectType") or "Container"
+    parent_type = parent_type if parent_type in _BH_TYPE_SINGULAR.values() else "Container"
+    parent_key = _ensure_placeholder(state, sid=parent_sid, default_type=parent_type)
+    state.add_edge(
+        src_key=parent_key,
+        dst_key=src_key,
+        kind=EdgeKind.CONTAINS,
+        weight=1.0,
+        props={"bh_right": "Contains"},
+    )
+
+
+def _ingest_child_objects(state: _IngestState, src_key: str, obj: dict[str, Any]) -> None:
+    """``ChildObjects[]`` on Domain / OU / Container — forward
+    ``parent CONTAINS child`` edges (no flip needed)."""
+    children = obj.get("ChildObjects") or []
+    if not isinstance(children, list):
+        return
+    for child in children:
+        if not isinstance(child, dict):
             continue
-        parent = bh_index.get(sid)
-        if parent is None:
-            parent = Node.make(
-                NodeKind.GROUP,
-                sid,
-                key=f"bh::Group::{sid}",
-                bh_id=sid,
-                bh_type="Group",
-            )
-            graph.upsert_node(parent)
-            bh_index[sid] = parent
-        graph.upsert_edge(
-            Edge.make(node.id, parent.id, EdgeKind.MEMBER_OF, weight=0.8, bh_right="MemberOf")
+        child_sid = child.get("ObjectIdentifier")
+        if not isinstance(child_sid, str) or not child_sid:
+            continue
+        child_type = child.get("ObjectType") or "Container"
+        child_type = child_type if child_type in _BH_TYPE_SINGULAR.values() else "Container"
+        child_key = _ensure_placeholder(state, sid=child_sid, default_type=child_type)
+        state.add_edge(
+            src_key=src_key,
+            dst_key=child_key,
+            kind=EdgeKind.CONTAINS,
+            weight=1.0,
+            props={"bh_right": "Contains"},
         )
-        stats.edges += 1
 
 
-def merge_bloodhound_json(
-    data: dict[str, Any] | str,
-    graph: KnowledgeGraph,
-    *,
-    type_hint: str | None = None,
-) -> ImportStats:
-    """Merge a single BloodHound JSON object into ``graph``.
-
-    ``type_hint`` overrides BloodHound's ``meta.type`` field for the
-    rare collector outputs without a meta block. Recognised types:
-    Users, Computers, Groups, Domains, GPOs, OUs.
-    """
-    if isinstance(data, str):
-        try:
-            data = json.loads(data)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"bloodhound: invalid JSON payload: {exc}") from exc
-    # BH-CE JSONL-style top-level list. Each item carries its own ``kind``
-    # discriminator; iterate and recursively merge. An empty list is valid
-    # and produces zero stats — the test in tests/unit/ad/test_ad.py
-    # ``test_empty_array_produces_zero_stats`` pins this contract.
-    if isinstance(data, list):
-        stats = ImportStats()
-        for item in data:
-            if isinstance(item, (dict, str, bytes)):
-                inc = merge_bloodhound_json(item, graph, type_hint=type_hint)
-                stats.users += inc.users
-                stats.computers += inc.computers
-                stats.groups += inc.groups
-                stats.domains += inc.domains
-                stats.gpos += inc.gpos
-                stats.ous += inc.ous
-                stats.edges += inc.edges
-        return stats
-    if not isinstance(data, dict):
-        raise ValueError(
-            f"bloodhound: expected a JSON object at the top level, got {type(data).__name__}"
+def _ingest_gp_links(state: _IngestState, src_key: str, obj: dict[str, Any]) -> None:
+    """Domain / OU ``Links[]`` → GP_LINK edges from GPO to the container."""
+    links = obj.get("Links") or []
+    if not isinstance(links, list):
+        return
+    for link in links:
+        if not isinstance(link, dict):
+            continue
+        gpo_guid = link.get("Guid") or link.get("GUID")
+        if not isinstance(gpo_guid, str) or not gpo_guid:
+            continue
+        gpo_key = _ensure_placeholder(state, sid=gpo_guid, default_type="GPO")
+        state.add_edge(
+            src_key=gpo_key,
+            dst_key=src_key,
+            kind=EdgeKind.GP_LINK,
+            weight=0.8,
+            props={
+                "bh_right": "GPLink",
+                "enforced": bool(link.get("IsEnforced")),
+            },
         )
-    stats = ImportStats()
 
+
+def _ingest_trusts(state: _IngestState, src_key: str, obj: dict[str, Any]) -> None:
+    """Trap 4: Trust 4-way split. Replaces the legacy single
+    ``TrustedBy`` edge."""
+    trusts = obj.get("Trusts") or []
+    if not isinstance(trusts, list):
+        return
+    for trust in trusts:
+        if not isinstance(trust, dict):
+            continue
+        target_sid = trust.get("TargetDomainSid")
+        if not isinstance(target_sid, str) or not target_sid:
+            continue
+        dst_key = _ensure_placeholder(state, sid=target_sid, default_type="Domain")
+        edge_kind = _trust_edge_kind(trust.get("TrustType"), trust.get("IsTransitive"))
+        trust_props: dict[str, Any] = {
+            "trust_type": trust.get("TrustType"),
+            "is_transitive": bool(trust.get("IsTransitive")),
+            "trust_direction": trust.get("TrustDirection"),
+            "sid_filtering_enabled": trust.get("SidFilteringEnabled"),
+            "tgt_delegation_enabled": trust.get("TGTDelegationEnabled"),
+        }
+        trust_props = {k: v for k, v in trust_props.items() if v is not None}
+        state.add_edge(
+            src_key=src_key,
+            dst_key=dst_key,
+            kind=edge_kind,
+            weight=0.4,
+            props=trust_props,
+        )
+
+
+# ── Top-level merge ─────────────────────────────────────────────────
+
+
+def _merge_one_payload(state: _IngestState, data: dict[str, Any], *, type_hint: str | None) -> None:
+    """Merge one BloodHound JSON payload (one file's worth of objects)
+    into the accumulator. Updates per-kind counters in ``state.stats``."""
     meta_raw = data.get("meta")
     meta = meta_raw if isinstance(meta_raw, dict) else {}
     object_type = type_hint or meta.get("type") or "Users"
     type_singular = _BH_TYPE_SINGULAR.get(object_type.lower(), object_type.rstrip("s"))
+
+    # Trap 5: capture meta.methods so every ingested object carries
+    # the collection-method bitmask as provenance.
+    methods = meta.get("methods")
+    if isinstance(methods, int) and methods:
+        state.collection_methods = methods
 
     items_raw = data.get("data") if "data" in data else data.get("items")
     if items_raw is None:
@@ -329,38 +620,104 @@ def merge_bloodhound_json(
         raise ValueError(
             f"bloodhound: 'data'/'items' must be an array, got {type(items_raw).__name__}"
         )
+
     counter_attr = object_type.lower()
-
-    bh_index = _build_bh_index(graph)
-
     for obj in items:
         if not isinstance(obj, dict):
             continue
-        node = _upsert_bh_object(graph, obj, type_singular)
-        bh_index[node.props.get("bh_id", "")] = node
-        _ingest_aces(graph, node, obj, stats, bh_index)
-        _ingest_memberships(graph, node, obj, stats, bh_index)
-        _ingest_delegation_edges(graph, node, obj, stats, bh_index)
-        if hasattr(stats, counter_attr):
-            setattr(stats, counter_attr, getattr(stats, counter_attr) + 1)
-    return stats
+        _ingest_object(state, obj, type_singular)
+        if type_singular in ("Domain", "OU", "Container"):
+            _ingest_child_objects(
+                state, _key_for_object(type_singular, obj.get("ObjectIdentifier", "")), obj
+            )
+            _ingest_gp_links(
+                state, _key_for_object(type_singular, obj.get("ObjectIdentifier", "")), obj
+            )
+        if type_singular == "Domain":
+            _ingest_trusts(
+                state, _key_for_object(type_singular, obj.get("ObjectIdentifier", "")), obj
+            )
+        if hasattr(state.stats, counter_attr):
+            setattr(state.stats, counter_attr, getattr(state.stats, counter_attr) + 1)
+
+    # Clear the collection-method context once this payload is done.
+    state.collection_methods = 0
+
+
+def _merge_payload(state: _IngestState, data: Any, *, type_hint: str | None) -> None:
+    """Recursively merge a payload (object, list, or string-encoded)."""
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"bloodhound: invalid JSON payload: {exc}") from exc
+    if isinstance(data, list):
+        for item in data:
+            _merge_payload(state, item, type_hint=type_hint)
+        return
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"bloodhound: expected a JSON object at the top level, got {type(data).__name__}"
+        )
+    _merge_one_payload(state, data, type_hint=type_hint)
+
+
+# ── Public API ──────────────────────────────────────────────────────
 
 
 _MAX_ENTRY_SIZE = 100_000_000  # per-entry decompressed-byte cap (zip-bomb defense)
 
 
-def ingest_bloodhound_zip(path: str | Path, graph: KnowledgeGraph) -> ImportStats:
-    """Walk a BloodHound collector zip and merge every JSON file inside."""
-    total = ImportStats()
+def merge_bloodhound_json(
+    data: dict[str, Any] | list[Any] | str,
+    *,
+    engagement: str,
+    type_hint: str | None = None,
+    store: KGStore | None = None,
+    source_episode_id: str = "bh_ingest_json",
+) -> ImportStats:
+    """Merge one BloodHound JSON payload into the engagement KG.
+
+    Returns an :class:`ImportStats` capturing how many objects of each
+    kind were merged. The KGStore write happens in a single atomic
+    batch — partial failure rolls back.
+
+    Args:
+        data: JSON object, list, or string-encoded payload.
+        engagement: Engagement label (mandatory). KGStore writes are
+            scoped to this engagement.
+        type_hint: Override BloodHound's ``meta.type`` (rare collector
+            outputs omit the meta block).
+        store: Optional pre-constructed ``KGStore`` for tests; defaults
+            to ``KGStore.from_env()`` and is closed before return.
+        source_episode_id: Provenance tag for every observation.
+    """
+    state = _IngestState()
+    _merge_payload(state, data, type_hint=type_hint)
+    _flush(state, engagement=engagement, store=store, source_episode_id=source_episode_id)
+    return state.stats
+
+
+def ingest_bloodhound_zip(
+    path: str | Path,
+    *,
+    engagement: str,
+    store: KGStore | None = None,
+    source_episode_id: str = "bh_ingest_zip",
+) -> ImportStats:
+    """Walk a BloodHound collector ZIP and merge every JSON file inside.
+
+    Returns an :class:`ImportStats` summarising the merge. All files
+    land in a single :meth:`KGStore.record_observations` call so the
+    whole ZIP either applies atomically or rolls back.
+    """
+    state = _IngestState()
     p = Path(path)
 
     with zipfile.ZipFile(p) as zf:
         for name in zf.namelist():
             if not name.lower().endswith(".json"):
                 continue
-            # Stream-read and enforce the cap on actual decompressed bytes.
-            # Trusting info.file_size is unsafe — an attacker controls the
-            # declared uncompressed size in the ZIP central directory.
             try:
                 buf = io.BytesIO()
                 with zf.open(name) as entry:
@@ -378,11 +735,44 @@ def ingest_bloodhound_zip(path: str | Path, graph: KnowledgeGraph) -> ImportStat
                 continue
             type_hint = None
             base = Path(name).stem.lower()
-            for hint in ("users", "computers", "groups", "domains", "gpos", "ous"):
+            for hint in (
+                "users",
+                "computers",
+                "groups",
+                "domains",
+                "gpos",
+                "ous",
+                "containers",
+            ):
                 if hint in base:
                     type_hint = hint.capitalize()
                     break
-            inc = merge_bloodhound_json(data, graph, type_hint=type_hint)
-            for attr in ("users", "computers", "groups", "domains", "gpos", "ous", "edges"):
-                setattr(total, attr, getattr(total, attr) + getattr(inc, attr))
-    return total
+            _merge_payload(state, data, type_hint=type_hint)
+
+    _flush(state, engagement=engagement, store=store, source_episode_id=source_episode_id)
+    return state.stats
+
+
+def _flush(
+    state: _IngestState,
+    *,
+    engagement: str,
+    store: KGStore | None,
+    source_episode_id: str,
+) -> None:
+    """Single atomic write of the accumulated observations."""
+    observations = list(state.obs_by_key.values())
+    if not observations:
+        return
+    owned_store = store is None
+    target_store = store if store is not None else KGStore.from_env()
+    try:
+        target_store.record_observations(
+            observations,
+            engagement=engagement,
+            created_by="bh_ingest",
+            source_episode_id=source_episode_id,
+        )
+    finally:
+        if owned_store:
+            target_store.close()

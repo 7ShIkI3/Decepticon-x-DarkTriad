@@ -10,45 +10,68 @@ from zipfile import BadZipFile
 from langchain_core.tools import tool
 
 from decepticon.tools.ad.adcs import analyze_adcs_templates
-from decepticon.tools.ad.bloodhound import ingest_bloodhound_zip, merge_bloodhound_json
+from decepticon.tools.ad.bloodhound import (
+    ingest_bloodhound_zip as _ingest_bloodhound_zip_impl,
+)
+from decepticon.tools.ad.bloodhound import (
+    merge_bloodhound_json as _merge_bloodhound_json_impl,
+)
 from decepticon.tools.ad.dcsync import dcsync_candidates
 from decepticon.tools.ad.delegation import analyze_delegation
 from decepticon.tools.ad.gpo import analyze_gpo_abuse
 from decepticon.tools.ad.kerberos import classify_hashcat_hash, parse_ticket
 from decepticon.tools.ad.shadow_creds import analyze_shadow_credentials
 from decepticon.tools.research._state import _load, _save
+from decepticon_core.utils.engagement_scope import get_active_engagement
 
 
 def _json(data: Any) -> str:
     return json.dumps(data, indent=2, default=str, ensure_ascii=False)
 
 
+def _resolve_engagement() -> str:
+    """Engagement label for BloodHound ingest writes.
+
+    Falls back to the reserved ``_legacy`` label when the
+    ``EngagementContextMiddleware`` contextvar is unset — matches the
+    behaviour of the legacy ``_state`` shim used by the read-mostly AD
+    analysis tools below (``dcsync_check`` / ``delegation_audit`` /
+    ``gpo_audit`` / ``shadow_creds_audit``).
+    """
+    return get_active_engagement() or "_legacy"
+
+
 @tool
 def bh_ingest_zip(path: str) -> str:
-    """Merge a BloodHound collector ZIP into the KnowledgeGraph."""
-    graph, kg_path = _load()
+    """Merge a BloodHound collector ZIP into the engagement KG.
+
+    Writes flow directly through ``KGStore.record_observations`` — a
+    single atomic batch per ZIP. The engagement label is resolved from
+    the ``EngagementContextMiddleware`` contextvar.
+    """
+    engagement = _resolve_engagement()
     try:
-        stats = ingest_bloodhound_zip(path, graph)
+        stats = _ingest_bloodhound_zip_impl(path, engagement=engagement)
     except (OSError, BadZipFile) as exc:
         return _json({"error": str(exc)})
-    _save(graph, kg_path)
-    return _json({"import": stats.to_dict(), "stats": graph.stats()})
+    return _json({"import": stats.to_dict()})
 
 
 @tool
 def bh_ingest_json(path: str, type_hint: str = "") -> str:
-    """Merge a single BloodHound JSON file into the KnowledgeGraph."""
-    graph, kg_path = _load()
+    """Merge a single BloodHound JSON file into the engagement KG."""
+    engagement = _resolve_engagement()
     try:
         data = Path(path).read_text(encoding="utf-8")
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return _json({"error": str(exc)})
     try:
-        stats = merge_bloodhound_json(data, graph, type_hint=type_hint or None)
+        stats = _merge_bloodhound_json_impl(
+            data, engagement=engagement, type_hint=type_hint or None
+        )
     except (ValueError, json.JSONDecodeError) as exc:
         return _json({"error": str(exc)})
-    _save(graph, kg_path)
-    return _json({"import": stats.to_dict(), "stats": graph.stats()})
+    return _json({"import": stats.to_dict()})
 
 
 @tool
