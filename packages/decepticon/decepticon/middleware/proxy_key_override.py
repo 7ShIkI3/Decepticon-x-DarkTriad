@@ -31,16 +31,40 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
-from typing_extensions import override
+from typing_extensions import NotRequired, override
 
 from decepticon.llm.factory import LLMFactory, _model_drops_temperature
 from decepticon_core.utils.logging import get_logger
 
 log = get_logger("middleware.proxy_key_override")
+
+
+class ProxyKeyState(AgentState):
+    """State surface for the per-run virtual key.
+
+    Declared so the orchestrator graph has a ``proxy_api_key`` channel — the
+    Platform DROPS an undeclared key from run input, so without this channel a
+    SaaS caller threading the key via run ``input`` could never reach
+    ``request.state`` (the middleware's reachable read path; ``runtime.context``
+    needs a top-level ``context`` field, which the Platform forbids alongside
+    ``config.configurable`` that OSS already uses for tenant context). LastValue
+    (overwrite): set once on the kickoff run, persisted to the checkpoint, and
+    read on every model call (incl. resume runs that send no input). Extends
+    ``AgentState`` so the agent's own channels are preserved.
+
+    The value is sensitive (a LiteLLM virtual key). It is never logged here;
+    ``event_logging`` redacts ``api_key`` fields; the SaaS stream + state
+    routes redact it from client-facing surfaces. It does persist into the
+    checkpoint + internal LangSmith trace state — an accepted internal-only
+    exposure (NOT run metadata, so it does not regress the metadata-leak fix).
+    """
+
+    proxy_api_key: NotRequired[str]
 
 
 def _read_proxy_key(request: Any) -> str:
@@ -97,6 +121,12 @@ class ProxyKeyOverrideMiddleware(AgentMiddleware):
     No-op when no per-run key is present, so OSS / single-tenant deployments
     behave exactly as before.
     """
+
+    # Register the ``proxy_api_key`` channel on every graph that mounts this
+    # slot, so a SaaS caller can deliver the key via run ``input`` (the channel
+    # the Platform actually persists into ``request.state``). create_agent
+    # merges this into the compiled graph state.
+    state_schema = ProxyKeyState
 
     @override
     def wrap_model_call(self, request, handler):

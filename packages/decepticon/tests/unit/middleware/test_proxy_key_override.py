@@ -145,3 +145,23 @@ class TestProxyKeyOverrideMiddlewareWiring:
 
         assert mw.wrap_model_call(_Req(), handler) == "ok"
         assert captured["key"] == "sk-engagement-xyz"
+
+
+def test_declares_proxy_api_key_state_channel() -> None:
+    """The middleware must DECLARE ``proxy_api_key`` as a state channel.
+
+    The middleware reads ``request.state["proxy_api_key"]``, but the LangGraph
+    Platform DROPS an undeclared key from run ``input`` — so without this
+    channel a SaaS caller threading the key via input could never populate
+    ``request.state``. Declaring it on the middleware's ``state_schema`` makes
+    ``create_agent`` register the channel on the compiled graph.
+    """
+    from langchain.agents import AgentState
+
+    from decepticon.middleware.proxy_key_override import ProxyKeyState
+
+    assert ProxyKeyOverrideMiddleware.state_schema is ProxyKeyState
+    assert "proxy_api_key" in ProxyKeyState.__annotations__
+    # Extends AgentState so the agent's own channels (messages, …) survive the
+    # schema merge.
+    assert issubclass(ProxyKeyState, AgentState)
