@@ -19,6 +19,7 @@ from decepticon.middleware.notifications import (
     SandboxNotificationMiddleware,
 )
 from decepticon.middleware.opplan import OPPLANMiddleware
+from decepticon.middleware.personality import PersonalityMiddleware
 from decepticon.middleware.prompt_injection_shield import (
     PromptInjectionShieldMiddleware,
 )
@@ -45,6 +46,7 @@ __all__ = [
     "InProcessApprovalTransport",
     "KGMiddleware",
     "OPPLANMiddleware",
+    "PersonalityMiddleware",
     "PromptInjectionShieldMiddleware",
     "RoEEnforcementMiddleware",
     "RoEGuardrailMiddleware",

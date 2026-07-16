@@ -63,28 +63,25 @@ PLUGIN_GRAPHS: dict[str, str] = {
     "exploiter": "./decepticon/agents/plugins/exploiter.py:graph",
 }
 
+# NavMAX bundle — 🜏 Dark Triad personality engine + NavMAX offensive modules.
+# Activer via DECEPTICON_PLUGINS=standard,navmax ou config file.
+# Chaque entry pointe vers un module LangGraph compilé (pattern module:graph).
+# Les agents NavMAX remplacent/supplémentent les agents standard avec des
+# implémentations native (impacket, ldap3, nmap, nuclei, API FortiGate/StormShield).
+NAVMAX_GRAPHS: dict[str, str] = {
+    "navmax_darktriad": "./decepticon/agents/navmax/darktriad.py:graph",
+    "navmax_ad_operator": "./decepticon/agents/navmax/ad_operator.py:graph",
+    "navmax_scanner": "./decepticon/agents/navmax/scanner.py:graph",
+    "navmax_exploit": "./decepticon/agents/navmax/exploit.py:graph",
+    "navmax_firewall": "./decepticon/agents/navmax/firewall.py:graph",
+}
+
 # Mapping from bundle name to its graph dict — used by build_langserve_graphs.
 _BUNDLE_TO_GRAPHS: dict[str, dict[str, str]] = {
     "standard": STANDARD_GRAPHS,
     "plugins": PLUGIN_GRAPHS,
+    "navmax": NAVMAX_GRAPHS,
 }
-
-# NavMAX bundle — modules NavMAX intégrés dans Decepticon.
-# Activer via DECEPTICON_PLUGINS=standard,navmax ou config file.
-# Les skill wrappers sont dans skills/standard/navmax-*/ et le code
-# source dans le package decepticon.navmax.
-NAVMAX_MODULES: dict[str, str] = {
-    "navmax-ad": "./decepticon/navmax/ad/__init__.py",       # AD connector, enum, trust, ADCS, BH, spray
-    "navmax-firewall": "./decepticon/navmax/firewall/__init__.py",  # FortiGate, StormShield, rule analyzer
-    "navmax-exploit": "./decepticon/navmax/exploit/__init__.py",    # Exploit framework + 30+ modules
-    "navmax-scanner": "./decepticon/navmax/scanner/__init__.py",    # TCP, nmap, nuclei, fingerprint
-    "navmax-recon": "./decepticon/navmax/osint/__init__.py",        # OSINT + proxy MITM
-}
-# NavMAX est actuellement en mode skill-only (SKILL.md wrappers).
-# Les agents LangGraph seront ajoutés dans une phase ultérieure.
-# Pour utiliser les modules NavMAX depuis Python :
-#   from decepticon.navmax.ad import ADConnector
-#   from decepticon.navmax.exploit import exploit_loader
 
 # Backward-compat alias — full unfiltered manifest (every OSS-shipped graph).
 # Prefer ``build_langserve_graphs()`` which respects DECEPTICON_PLUGINS.
@@ -94,7 +91,7 @@ BUILTIN_GRAPHS: dict[str, str] = {**STANDARD_GRAPHS, **PLUGIN_GRAPHS}
 def build_langserve_graphs() -> dict[str, str]:
     """Return ``{name: module:graph}`` for active bundles + discovered plugins.
 
-    OSS-internal bundles (``standard``, ``plugins``) are filtered by
+    OSS-internal bundles (``standard``, ``plugins``, ``navmax``) are filtered by
     ``DECEPTICON_PLUGINS`` / config-file allowlist. Plugin-contributed
     agents (registered under the ``decepticon.agents`` entry-point group
     by external packages) are always merged in — installing the package

@@ -53,6 +53,7 @@ _PROMPT_SEARCH_PATHS: tuple[Path, ...] = (
     _PROMPTS_DIR,
     _PROMPTS_DIR / "standard",
     _PROMPTS_DIR / "plugins",
+    _PROMPTS_DIR / "navmax",
 )
 
 # ── Cache boundary marker ────────────────────────────────────────────────────
@@ -207,6 +208,11 @@ _OPERATIONAL_ROLES = {
     "contract_auditor",
     "cloud_hunter",
     "ad_operator",
+    "navmax_ad_operator",
+    "navmax_scanner",
+    "navmax_exploit",
+    "navmax_firewall",
+    "navmax_darktriad",
 }
 
 

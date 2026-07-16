@@ -1,0 +1,170 @@
+# prepend-special.rule — Préfixe !@#$%^&* avec capitalisation
+# Format: ^X ajoute le caractère X au début (préfixe)
+
+# === Préfixe spécial seul ===
+^!
+^@
+^#
+^$
+^%
+^^
+^&
+^*
+
+# === Capitalize + préfixe spécial ===
+c ^!
+c ^@
+c ^#
+c ^$
+c ^%
+c ^^
+c ^&
+c ^*
+
+# === Lower + préfixe spécial ===
+l ^!
+l ^@
+l ^#
+l ^$
+l ^%
+l ^^
+l ^&
+l ^*
+
+# === Upper + préfixe spécial ===
+u ^!
+u ^@
+u ^#
+u ^$
+u ^%
+u ^^
+u ^&
+u ^*
+
+# === Toggle + préfixe spécial ===
+t ^!
+t ^@
+t ^#
+t ^$
+t ^%
+t ^^
+t ^&
+t ^*
+
+# === Reverse + préfixe spécial ===
+r ^!
+r ^@
+r ^#
+r ^$
+r ^%
+r ^^
+r ^&
+r ^*
+
+# === Duplicate + préfixe spécial ===
+d ^!
+d ^@
+d ^#
+d ^$
+d ^%
+d ^^
+d ^&
+d ^*
+
+# === Double préfixe spécial ===
+^! ^@
+^@ ^!
+^# ^$
+^$ ^#
+^% ^^
+^& ^*
+^* ^&
+^! ^!
+^@ ^@
+^# ^#
+^$ ^$
+^% ^%
+^^ ^^
+^& ^&
+^* ^*
+
+# === Préfixe spécial + suffixe chiffre ===
+^! $0
+^@ $1
+^# $2
+^$ $3
+^% $4
+^^ $5
+^& $6
+^* $7
+^! $1
+^@ $2
+^# $3
+^$ $4
+^% $5
+^^ $6
+^& $7
+^* $8
+
+# === Capitalize + préfixe spécial + suffixe ===
+c ^! $1
+c ^@ $2
+c ^# $3
+c ^$ $4
+c ^% $5
+c ^^ $6
+c ^& $7
+c ^* $8
+
+# === Préfixe spécial + année commune 2 chiffres ===
+^! $2 $4
+^! $2 $3
+^@ $2 $4
+^@ $2 $3
+^# $2 $4
+^$ $2 $4
+^% $2 $4
+^^ $2 $4
+^& $2 $4
+^* $2 $4
+^! $0 $0
+^@ $0 $0
+
+# === Combinaisons variées ===
+# Préfixe spécial + reverse + capitalize
+^! c r
+^@ c r
+^# u r
+^$ u r
+
+# Préfixe spécial + leet basique
+^! se3
+^@ ss5
+^# sa4
+^$ si1
+^% so0
+^^ st7
+^& se3 sa4
+^* sa4 ss5
+
+# Capitalize + préfixe spécial + leet
+c ^! se3
+c ^@ sa4
+c ^# ss5
+c ^$ si1
+c ^% so0
+c ^^ st7
+
+# Préfixe spécial + duplicate + capitalize
+^! d c
+^@ d c
+^# d u
+^$ d c
+
+# Préfixe triple spécial
+^! ^@ ^#
+^@ ^# ^$
+^# ^$ ^%
+^$ ^% ^^
+^% ^^ ^&
+^^ ^& ^*

@@ -233,6 +233,18 @@ SLOTS_PER_ROLE: dict[str, frozenset[MiddlewareSlot]] = {
     "patcher": _BASH_AGENT_SLOTS,
     "scanner": _BASH_AGENT_SLOTS,
     "exploiter": _BASH_AGENT_SLOTS,
+    # ── NavMAX bundle sub-agents ──
+    "navmax_ad_operator": _BASH_AGENT_SLOTS,
+    "navmax_scanner": _BASH_AGENT_SLOTS,
+    "navmax_exploit": _BASH_AGENT_SLOTS,
+    "navmax_firewall": _BASH_AGENT_SLOTS,
+    # ── NavMAX orchestrator (base + subagent + opplan) ──
+    "navmax_darktriad": _BASE_SLOTS
+    | {
+        MiddlewareSlot.SUBAGENT,
+        MiddlewareSlot.OPPLAN,
+        MiddlewareSlot.OPSCONTROL_NOTIFICATION,
+    },
 }
 """Role → slot-set mapping. The assembler only walks slots present in
 the role's set; anything else is skipped silently. Plugin agents

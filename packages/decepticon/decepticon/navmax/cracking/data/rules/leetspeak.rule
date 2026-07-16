@@ -1,0 +1,219 @@
+# leetspeak.rule — 120+ substitutions leet speak
+# Format: s<original><replacement> (substitue tout caractère)
+
+# === Substitutions de base : voyelles ===
+# e → 3
+se3
+# a → 4
+sa4
+# a → @
+sa@
+# i → 1
+si1
+# i → !
+si!
+# o → 0
+so0
+# u → v
+suv
+# y → ÿ
+syÿ
+
+# === Substitutions de base : consonnes ===
+# s → 5
+ss5
+# s → $
+ss$
+# t → 7
+st7
+# t → +
+st+
+# l → 1
+sl1
+# l → !
+sl!
+# g → 9
+sg9
+# g → &
+sg&
+# b → 8
+sb8
+# b → 6
+sb6
+# z → 2
+sz2
+# h → 4
+sh4
+# k → X
+skX
+# w → vv
+swv
+# x → ×
+sx×
+
+# === Substitutions spécifiques ===
+# f → ph
+sfp
+# ph → f
+sph
+# c → k
+sck
+# c → (
+sc(
+# c → <
+sc<
+# d → |
+sd|
+# m → M
+smM
+# n → N
+snN
+# r → R
+srR
+
+# === MAJUSCULES (mêmes substitutions mais en version case) ===
+# E → 3
+sE3
+# A → 4
+sA4
+# A → @
+sA@
+# I → 1
+sI1
+# I → !
+sI!
+# O → 0
+sO0
+# S → 5
+sS5
+# S → $
+sS$
+# T → 7
+sT7
+# L → 1
+sL1
+# G → 9
+sG9
+# B → 8
+sB8
+# Z → 2
+sZ2
+# C → K
+sCK
+
+# === Substitutions doubles (deux passes) ===
+# e→3 + a→4
+se3 sa4
+# e→3 + o→0
+se3 so0
+# i→1 + o→0
+si1 so0
+# s→5 + e→3
+ss5 se3
+# a→@ + e→3
+sa@ se3
+# a→4 + e→3 + o→0
+sa4 se3 so0
+# a→@ + e→3 + s→5
+sa@ se3 ss5
+# i→1 + s→5 + e→3
+si1 ss5 se3
+# a→4 + s→5 + e→3 + o→0
+sa4 ss5 se3 so0
+# a→@ + i→1 + e→3 + s→5
+sa@ si1 se3 ss5
+# a→4 + i→1 + e→3 + o→0 + s→5
+sa4 si1 se3 so0 ss5
+# t→7 + e→3
+st7 se3
+# a→@ + t→7 + e→3
+sa@ st7 se3
+# s→5 + t→7 + a→@ + r→R + e→3
+ss5 st7 sa@ srR se3
+
+# === Combinaisons trois substitutions ===
+sa4 ss5 si1
+sa@ ss5 si1
+se3 ss5 si1
+so0 se3 ss5
+st7 so0 se3
+si1 st7 se3
+sa4 so0 se3
+ss5 si1 so0
+
+# === Combinaisons quatre substitutions ===
+sa4 ss5 si1 so0
+sa@ ss5 si1 so0
+se3 ss5 si1 sa4
+st7 so0 se3 sa4
+sa@ si1 se3 st7
+sa4 si1 se3 so0 ss5
+sa@ si1 se3 so0 ss5
+
+# === Substitutions avec capitalisation ===
+# Capitalize + leet de base
+c sa4
+c se3
+c ss5
+c si1
+c so0
+c sa@
+c st7
+
+# Lower + leet
+l sa4
+l se3
+l ss5
+l si1
+l so0
+
+# Upper + leet
+u se3
+u ss5
+u sa4
+u sa@
+
+# Toggle + leet
+t sa4
+t se3
+t ss5
+
+# Leet + reverse
+se3 r
+sa4 r
+ss5 r
+si1 r
+so0 r
+
+# Leet + append chiffre
+se3 $0
+sa4 $1
+ss5 $2
+si1 $3
+so0 $4
+se3 $1 sa4 $2
+
+# Leet + append spécial
+se3 $!
+sa4 $@
+ss5 $#
+si1 $$
+so0 $%
+
+# Double substitution + capitalisation
+c se3 sa4
+c se3 ss5
+c sa4 ss5
+u se3 sa4
+u se3 ss5
+t se3 sa4
+
+# === Substitutions avancées ===
+# (n) => (i) + (n)
+# avec uppercase
+u sa4 se3 ss5
+u sa@ se3 ss5
+c sa4 se3 ss5 si1
+c sa@ se3 ss5 si1
+u sa4 se3 ss5 si1 so0
+u sa@ se3 ss5 si1 so0

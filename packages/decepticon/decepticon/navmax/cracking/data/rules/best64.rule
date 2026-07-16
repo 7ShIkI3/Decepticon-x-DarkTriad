@@ -1,0 +1,96 @@
+# best64.rule — 64 meilleures règles hashcat
+# Transformation de base
+:
+l
+u
+c
+C
+t
+r
+d
+f
+{
+}
+q
+
+# Toggle case à différentes positions
+T0
+T1
+T2
+T3
+T4
+T5
+
+# Capitalisation avec combinaisons
+c r
+u r
+c d
+u d
+c d r
+u d r
+
+# Append chiffres (suffixe)
+$0
+$1
+$2
+$3
+$4
+$5
+$6
+$7
+$8
+$9
+
+# Append doubles chiffres
+$0 $1
+$1 $2
+$2 $3
+$1 $3
+$2 $0
+$1 $9
+$2 $4
+$0 $0
+$1 $0
+$0 $1
+
+# Prepend chiffres (préfixe)
+^0
+^1
+^2
+^3
+^4
+^5
+^6
+^7
+^8
+^9
+
+# Prepend + append combos
+^1 $2 ^3
+^2 $0 ^2 $4
+
+# Padding
+p2
+p3
+p4
+p5
+
+# Duplicate avec transformations
+u d r l
+l d r u
+
+# Reverse + append
+r $0
+r $1
+r $!
+r $@
+
+# Toggle + append
+t $1
+t $!
+t $.
+t $@
+
+# Capitalize + append année commune
+c $1 $2 $3
+c $2 $0 $2 $0

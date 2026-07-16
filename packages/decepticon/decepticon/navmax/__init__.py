@@ -3,77 +3,57 @@
 Package miroir des modules NavMAX (7ShIkI3) copiés pour utilisation
 native dans l'écosystème Decepticon (PurpleAILAB).
 
-Modules disponibles :
-  - ad         : Active Directory (connector, enumerator, attack_paths, ADCS, BloodHound…)
-  - ai         : Moteur IA, sélecteur de modèles, react_agent, providers
-  - cloud      : Scanner cloud (AWS/Azure/GCP)
-  - core       : Configuration, logging, exceptions, HTTP client, plugins
-  - cracking   : Wrappers hashcat, john, hydra + wordlists
-  - db         : Base de données SQLAlchemy (engine, models)
-  - exploit    : Framework d'exploitation (Metasploit-like) + modules intégrés
-  - firewall   : Connecteurs FortiGate, StormShield + analyse de règles
-  - osint      : OSINT (DNS, WHOIS, SSL, Shodan, Censys) + graphe d'entités
-  - proxy      : Proxy MITM, interceptor, fuzzer, intruder, crawler
-  - scanner    : Scanner TCP, Nmap, Nuclei, contextual, fingerprint
+Les imports sont lazy — importer `decepticon.navmax` ne charge
+pas les sous-modules lourds (aiohttp, impacket, ldap3, python-nmap).
+Pour utiliser un module, importez-le directement :
+    from decepticon.navmax.ad import ADConnector
+    from decepticon.navmax.personality import NARCISSUS
 """
 
 from __future__ import annotations
 
-# ---------------------------------------------------------------------------
-# Sous-modules — importation paresseuse (lazy) via strings pour éviter
-# les dépendances circulaires et les ralentissements au démarrage.
-# ---------------------------------------------------------------------------
-# AD
-from decepticon.navmax import ad as _ad  # noqa: F401
+# Lazy submodule access — defers imports until attribute access.
+# Adding a new module: add it to __getattr__ below + __dir__.
 
-# AI
-from decepticon.navmax import ai as _ai  # noqa: F401
 
-# Cloud
-from decepticon.navmax import cloud as _cloud  # noqa: F401
+def __getattr__(name: str):
+    _LAZY = {
+        "ad": "decepticon.navmax.ad",
+        "ai": "decepticon.navmax.ai",
+        "cloud": "decepticon.navmax.cloud",
+        "core": "decepticon.navmax.core",
+        "cracking": "decepticon.navmax.cracking",
+        "darktriad": "decepticon.navmax.darktriad",
+        "db": "decepticon.navmax.db",
+        "exploit": "decepticon.navmax.exploit",
+        "firewall": "decepticon.navmax.firewall",
+        "osint": "decepticon.navmax.osint",
+        "personality": "decepticon.navmax.personality",
+        "proxy": "decepticon.navmax.proxy",
+        "scanner": "decepticon.navmax.scanner",
+    }
+    if name in _LAZY:
+        import importlib
 
-# Core
-from decepticon.navmax import core as _core  # noqa: F401
+        mod = importlib.import_module(_LAZY[name])
+        globals()[name] = mod
+        return mod
+    raise AttributeError(f"module 'decepticon.navmax' has no attribute '{name}'")
 
-# Cracking
-from decepticon.navmax import cracking as _cracking  # noqa: F401
 
-# Dark Triad
-from decepticon.navmax import darktriad as _darktriad  # noqa: F401
-
-# DB
-from decepticon.navmax import db as _db  # noqa: F401
-
-# Exploit
-from decepticon.navmax import exploit as _exploit  # noqa: F401
-
-# Firewall
-from decepticon.navmax import firewall as _firewall  # noqa: F401
-
-# OSINT
-from decepticon.navmax import osint as _osint  # noqa: F401
-
-# Personality (standalone)
-from decepticon.navmax import personality as _personality  # noqa: F401
-
-# Proxy
-from decepticon.navmax import proxy as _proxy  # noqa: F401
-
-# Scanner
-from decepticon.navmax import scanner as _scanner  # noqa: F401
-
-__all__ = [
-    "ad",
-    "ai",
-    "cloud",
-    "core",
-    "cracking",
-    "darktriad",
-    "db",
-    "exploit",
-    "firewall",
-    "osint",
-    "personality",
-    "proxy",
-    "scanner",
-]
+def __dir__() -> list[str]:
+    return [
+        "ad",
+        "ai",
+        "cloud",
+        "core",
+        "cracking",
+        "darktriad",
+        "db",
+        "exploit",
+        "firewall",
+        "osint",
+        "personality",
+        "proxy",
+        "scanner",
+    ]

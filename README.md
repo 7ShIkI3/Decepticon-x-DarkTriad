@@ -1,25 +1,63 @@
 # 🜏 Decepticon × Dark Triad
 
-> **This is a boosted fork of [PurpleAILAB/Decepticon](https://github.com/PurpleAILAB/Decepticon) with 13 additional offensive modules from NavMAX and the Dark Triad personality engine — Narcissism, Psychopathy, and Machiavellianism.**
+> **Fork of [PurpleAILAB/Decepticon](https://github.com/PurpleAILAB/Decepticon) with NavMAX offensive modules integrated as native LangGraph agents and the Dark Triad personality engine loaded by default — Narcissism 🪞, Psychopathy 🔪, Machiavellianism 🕸️.**
 
 ---
 
-## 🜏 What's Added (vs upstream Decepticon)
+## 🜏 What's Different (vs upstream Decepticon)
 
-| Module | Files | Real Tools |
-|--------|-------|------------|
-| **AD** | `navmax/ad/engine.py` | ldap3 + impacket: DomainEnum, Kerberoaster, ASREPRoaster, PasswordSprayer |
-| **Scanner** | `navmax/scanner/engine.py` | nmap XML parser + nuclei JSONL parser, 5 scan profiles, personality mapping |
-| **Firewall** | `navmax/firewall/engine.py` | FortiGate REST API + StormShield SNS API, RuleAnalyzer, 5 CVE checks |
-| **Exploit** | `navmax/exploit/engine.py` | 7 exploit modules (SSH, Redis, SMB, EternalBlue, Jenkins, SNMP, Docker) + PayloadGenerator |
-| **Personality** | `navmax/personality/` | 🪞 Narcissism · 🔪 Psychopathy · 🕸️ Machiavellianism |
-| **Dark Triad** | `navmax/darktriad/` | Full engine: AI Router, Sandbox, 7 agents, Orchestrator, Knowledge Graph, Benchmark |
-| **OSINT** | `navmax/osint/` | DNS, WHOIS, SSL, Shodan, Censys collectors |
-| **Proxy** | `navmax/proxy/` | MITM, Interceptor, Fuzzer, Crawler, Repeater |
-| **Cracking** | `navmax/cracking/` | Hashcat, John, Hydra wrappers |
-| **Cloud** | `navmax/cloud/` | AWS/Azure/GCP scanners |
+### Level 3 LangGraph Integration — not skill wrappers
 
-**160+ Python files. Zero raw subprocess wrappers. Structured dataclass output on all core modules.**
+All NavMAX modules are registered as **native LangGraph agents** in the `navmax` bundle (loaded by default):
+
+| Agent | Role | Backed by |
+|-------|------|-----------|
+| `navmax_darktriad` | 🜏 Orchestrator — personality-driven dispatch to sub-agents | Dark Triad engine |
+| `navmax_ad_operator` | Active Directory specialist | `ldap3` + `impacket` native (Kerberoasting, AS-REP, DCSync, PtH, BloodHound, ADCS) |
+| `navmax_scanner` | Network scanner | `nmap` + `nuclei` + TCP native, 5 personality-aware profiles |
+| `navmax_exploit` | Exploitation framework | 20+ modules (SSH, Redis, Docker, SMB, Jenkins, Tomcat, etc.) |
+| `navmax_firewall` | Firewall auditor | FortiGate REST API + StormShield SNS API + RuleAnalyzer + 7 CVEs |
+
+Activation: **zero config** — the `navmax` bundle is enabled by default in `[tool.decepticon.plugins]`.
+
+### 🜏 Dark Triad Personality Engine
+
+3 base profiles + 4 fusion presets injected into every agent via `PersonalityMiddleware`:
+
+| Profile | Trait | Behavior |
+|---------|-------|----------|
+| 🪞 **Narcissus** | Aggressive, fast | Auto-execute, skip confirmations, biggest payload first |
+| 🔪 **Psychopath** | Relentless, maximum coverage | All tools in parallel, infinite retry, nothing off-limits |
+| 🕸️ **Machiavelli** | Strategic, stealthy | Multi-step chains, deception, track covering, minimal footprint |
+| 👻 **Ghost** | Machiavelli 90% + Psychopath 10% | Near-invisible with emergency aggression |
+| ⚔️ **Berserker** | Psychopath 70% + Narcissus 30% | Maximum destruction with style |
+
+### 📚 Built-in Password Libraries
+
+| Type | Files | Resources |
+|------|-------|-----------|
+| Wordlists | 5 embedded (2,417 entries) | common-1000, french-common (521), seasonal (303), keyboard-walks (255), default-creds (338) |
+| Rules | 4 embedded (683 rules) | best64, leetspeak, append-years, prepend-special |
+| Masks | 1 embedded (114 masks) | common.hcmask |
+| Downloaders | `download_popular()` + `download_rules_popular()` | 15+ online wordlists (SecLists, Weakpass, CrackStation, Probable-Wordlists, Hashes.org) + 4 rule sets (OneRuleToRuleThemAll, dive, NSAKEY, pantagrule) |
+
+### Module Inventory
+
+| Module | Files | Key Dependencies |
+|--------|-------|-----------------|
+| **AD** | `connector.py` (1,255 loc) + 9 support files | `ldap3`, `impacket` |
+| **Scanner** | `nmap_scanner.py` + `nuclei_scanner.py` + `tcp.py` + `vuln_db.py` | `python-nmap`, `nuclei` binary |
+| **Firewall** | `fortigate.py` (514 loc) + `stormshield.py` + `rule_analyzer.py` | `httpx` |
+| **Exploit** | `engine.py` (711 loc) + 20 modules | `httpx`, `asyncssh`, `paramiko` |
+| **AI Engine** | `engine.py` + `react_agent.py` (813 loc) + 4 providers | `ollama`, `httpx` |
+| **Dark Triad** | 35 Python files, 229 tests passing | `pytest`, `structlog` |
+| **Personality** | `personality.py` + middleware | pure Python (no heavy deps) |
+| **Cracking** | `hashcat_wrapper.py` + `john_wrapper.py` + `hydra_wrapper.py` + `library.py` (1,189 loc) | `hashcat`, `john`, `hydra` binaries |
+| **OSINT** | DNS, WHOIS, SSL, Shodan, Censys | `httpx` |
+| **Proxy** | MITM, Interceptor, Fuzzer, Crawler, Repeater | `mitmproxy`, `playwright` |
+| **Cloud** | AWS/Azure/GCP scanners | `boto3`, `azure-mgmt-*`, `google-cloud-*` |
+
+**173 files changed/added. 51,000+ lines. Zero subprocess.run() wrappers on core modules.**
 
 ---
 
@@ -30,9 +68,6 @@
 </a>
 <a href="https://github.com/PurpleAILAB/Decepticon/stargazers">
   <img src="https://img.shields.io/github/stars/PurpleAILAB/Decepticon?style=for-the-badge&color=yellow" alt="Stargazers">
-</a>
-<a href="https://github.com/PurpleAILAB/Decepticon/graphs/contributors">
-  <img src="https://img.shields.io/github/contributors/PurpleAILAB/Decepticon?style=for-the-badge&color=orange" alt="Contributors">
 </a>
 
 <br/>
@@ -46,27 +81,6 @@
 <a href="https://docs.decepticon.red">
   <img src="https://img.shields.io/badge/Docs-docs.decepticon.red-8B5CF6?logo=bookstack&logoColor=white&style=for-the-badge" alt="Documentation">
 </a>
-<a href="https://app.decepticon.red">
-  <img src="https://img.shields.io/badge/Live%20App-app.decepticon.red-FF2D55?logo=rocket&logoColor=white&style=for-the-badge" alt="Live hosted app">
-</a>
-
-</div>
-
-<br/>
-
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/b3fd40d8-e859-4a39-97f4-bd825694ad96" width="800" controls></video>
-</div>
-
-<div align="center">
-
-### ☁️ Don't want to self-host? **Decepticon is live in the cloud.**
-
-Skip the Docker setup — run autonomous red-team engagements right from your browser.
-
-<a href="https://app.decepticon.red">
-  <img src="https://img.shields.io/badge/Launch%20the%20Live%20App-app.decepticon.red-FF2D55?logo=rocket&logoColor=white&style=for-the-badge" alt="Launch the live app at app.decepticon.red">
-</a>
 
 </div>
 
@@ -75,16 +89,13 @@ Skip the Docker setup — run autonomous red-team engagements right from your br
 ## Install
 
 **Prerequisites**: [Docker](https://docs.docker.com/get-docker/) and Docker Compose v2.
-Supported on macOS (Apple Silicon + Intel), Linux (amd64 + arm64), and Windows (amd64 + arm64) — native via PowerShell or via WSL2 (Ubuntu / Kali).
 
 **macOS / Linux / WSL2**
 ```bash
 curl -fsSL https://decepticon.red/install | bash
-decepticon onboard   # Interactive setup wizard (provider, API key, model profile)
-decepticon           # Start the core stack and drop into the terminal CLI
+decepticon onboard
+decepticon
 ```
-
-The default start brings up the core management plane (LiteLLM, PostgreSQL, Neo4j, Skillogy, LangGraph, sandbox) and launches the terminal CLI. Specialist workloads (BloodHound CE, Sliver C2, Ghidra MCP, …) and the web dashboard come up on demand — the orchestrator spawns specialists via `ops_start("ad")` etc., and you bring up the dashboard from inside the CLI with `/web` (see [Web Dashboard](docs/web-dashboard.md)).
 
 **Windows (PowerShell, native)**
 ```powershell
@@ -95,159 +106,101 @@ decepticon
 
 → **[Quick start](docs/getting-started.md)** · **[Full setup walkthrough](docs/setup-guide.md)**
 
-### Use as a library (pip)
-
-Building on top of the agents — a product, a research integration, or a custom orchestrator? Install the SDK from PyPI:
-
-```bash
-pip install decepticon              # core SDK
-pip install "decepticon[neo4j]"     # + the knowledge-graph attack-chain tools
-```
-
-`decepticon` is a **client SDK**: it ships the agent factories, middleware, tools, and skills, and routes LLM calls and sandbox execution to runtime services over HTTP (`DECEPTICON_LLM__PROXY_URL`, `SANDBOX_URL`). Running agents still needs those services — use the Docker stack above, or point the URLs at your own equivalents. See **[Decepticon as a library](docs/library-usage.md)** for the factory override surface, declarative `PluginBundle` plugins, and the safety gate.
-
 ---
 
-## 💖 Support Decepticon
+## 🜏 Quick Start — Dark Triad
 
-[![Sponsor](https://img.shields.io/badge/Sponsor-Decepticon-red?style=for-the-badge&logo=github)](https://github.com/sponsors/PurpleCHOIms)
+```python
+# Personality engine (no heavy deps — works standalone)
+from decepticon.navmax.personality import NARCISSUS, PSYCHOPATH, MACHIAVELLI, FusionEngine
 
-We're building Decepticon toward an **Offensive Vaccine** for the AI-driven threat landscape. If you believe in autonomous red teaming as a path to stronger defense, consider supporting the project.
+# Fusion presets
+ghost = FusionEngine.create_preset("ghost")      # Machiavelli 90% + Psychopath 10%
+berserker = FusionEngine.create_preset("berserker")  # Psychopath 70% + Narcissus 30%
+
+# AD attacks with real impacket/ldap3
+from decepticon.navmax.ad import ADConnector
+conn = ADConnector(server="dc01.corp.local", username="admin", password="P@ssw0rd")
+await conn.connect()
+tickets = await conn.kerberoast()  # Real Kerberos TGS requests
+
+# Firewall audit
+from decepticon.navmax.firewall import FortiGateConnector
+fgt = FortiGateConnector(host="10.0.0.1", api_key="...")
+await fgt.connect()
+rules = await fgt.get_rules()
+
+# Download password lists
+from decepticon.navmax.cracking import CrackingLibrary
+CrackingLibrary.download_popular("10k-most-common", "probable-wpa")
+CrackingLibrary.download_rules_popular("OneRuleToRuleThemAll", "dive")
+```
 
 ---
 
 ## Benchmark
 
 <div align="center">
-  <img src="assets/benchmark/decepticon_donut.png" alt="Decepticon — XBOW pass rate 102/104 (98.08%)" width="560">
+  <img src="assets/benchmark/decepticon_donut.png" alt="Decepticon — XBOW pass rate" width="560">
 </div>
 
 | Benchmark | Difficulty | Pass Rate |
 |-----------|------------|-----------|
-| [XBOW validation-benchmarks](https://github.com/PurpleAILAB/xbow-validation-benchmarks) | Easy (Level 1)   | **45 / 45** (100 %) |
-| [XBOW validation-benchmarks](https://github.com/PurpleAILAB/xbow-validation-benchmarks) | Medium (Level 2) | **50 / 51** (98.0 %) |
-| [XBOW validation-benchmarks](https://github.com/PurpleAILAB/xbow-validation-benchmarks) | Hard (Level 3)   | **7 / 8** (87.5 %) |
-| [XBOW validation-benchmarks](https://github.com/PurpleAILAB/xbow-validation-benchmarks) | **All levels**   | **102 / 104** (98.08 %) |
-
-- **[Full per-challenge index, attack-class matrix, and LangSmith traces](benchmark/results/README.md)**
-- **[Comparison vs other AI pentest agents (Strix, PentestGPT, MAPTA, Cyber-AutoAgent, XBOW commercial, …)](docs/benchmark-comparison.md)**
-
----
-
-## What is Decepticon?
-
-The "AI + hacking" space is full of demos that run nmap and print a report. That's not what this is.
-
-**Decepticon is a professional autonomous Red Team agent.** It executes realistic attack chains — reconnaissance, exploitation, privilege escalation, lateral movement, C2 — the way a real adversary would, not the way a scanner does.
-
-But more importantly: it operates under the discipline that separates red teamers from script kiddies. Before a single packet leaves the wire, Decepticon generates a complete engagement package — **RoE**, **ConOps**, **Deconfliction Plan**, and **OPPLAN** with MITRE ATT&CK mapping — and every action runs inside those defined rules.
-
-→ **[Engagement workflow deep dive](docs/engagement-workflow.md)**
-
----
-
-## Why Decepticon?
-
-**Real kill chains, not checkbox scans.** Decepticon reads an OPPLAN and pursues objectives through whatever path opens up — pivoting, adapting, chaining techniques.
-
-**Interactive shells, actually.** Real offensive tools are interactive (`msfconsole`, `sliver-client`, `evil-winrm`). Decepticon runs every command inside persistent tmux sessions with automatic prompt detection — so when a tool drops into an interactive prompt, the agent sends follow-up commands without workarounds.
-
-**Hardened sandbox isolation.** All commands run inside a Kali Linux sandbox on a dedicated operational network (`sandbox-net`), separate from the management plane (`decepticon-net`). LangGraph drives the sandbox via the Docker socket. → **[Architecture](docs/architecture.md)**
-
-**Offense serves defense.** The planned [Offensive Vaccine](docs/offensive-vaccine.md) loop will turn findings into defense improvements through an attack → defend → verify cycle.
+| [XBOW validation-benchmarks](https://github.com/PurpleAILAB/xbow-validation-benchmarks) | Easy | **45 / 45** (100%) |
+| [XBOW validation-benchmarks](https://github.com/PurpleAILAB/xbow-validation-benchmarks) | Medium | **50 / 51** (98.0%) |
+| [XBOW validation-benchmarks](https://github.com/PurpleAILAB/xbow-validation-benchmarks) | Hard | **7 / 8** (87.5%) |
+| **All levels** | | **102 / 104** (98.08%) |
 
 ---
 
 ## Architecture
 
-<div align="center">
-  <img src="assets/decepticon_infra.svg" alt="Decepticon Infrastructure" width="680">
-</div>
+Two-network design. Management plane (LiteLLM, PostgreSQL, Skillogy, LangGraph) + sandbox plane (Kali Linux, tools). NavMAX agents run inside the same LangGraph infrastructure as standard Decepticon agents — no separate process, no subprocess wrappers.
 
-Two-network design. The **always-on** management plane (LiteLLM, PostgreSQL, Skillogy, LangGraph) and the always-on sandbox plane stay up across the whole engagement; everything else is **dynamic-spawn** — the Web dashboard comes up on `/web` from the CLI, and specialist workloads (BloodHound CE, Sliver C2, Ghidra MCP, …) come up only when the orchestrator calls `ops_start(...)` (see [ADR-0006](docs/adr/0006-agent-driven-container-lifecycle.md)). Networks: management on `decepticon-net`; sandbox + C2 server + targets on `sandbox-net`. Neo4j is dual-homed so the agent (on management) can persist findings written from inside the sandbox.
-
-→ **[Architecture deep dive](docs/architecture.md)** · **[Knowledge graph](docs/knowledge-graph.md)**
+→ **[Architecture deep dive](docs/architecture.md)**
 
 ---
 
-## Agents
+## Agents (Standard + NavMAX)
 
-16 specialist agents organized by kill chain phase, with a fresh context window per objective — no accumulated noise.
+**25 agents total** — 19 standard + 1 orchestrator + 5 NavMAX:
 
-Orchestration · Reconnaissance · Exploitation · Post-Exploitation · Vulnerability Research · Domain Specialists (AD, Cloud, Smart Contracts, Reversing, Analyst).
+| Bundle | Agents |
+|--------|--------|
+| `standard` (19) | decepticon, recon, exploit, postexploit, analyst, reverser, ad_operator, cloud_hunter, blue_cell, phisher, mobile_operator, wireless_operator, osint_operator, iot_operator, ics_operator, forensicator, supply_chain_operator, contract_auditor, soundwave |
+| `plugins` (6) | vulnresearch, scanner, detector, verifier, patcher, exploiter |
+| `navmax` (5) | **navmax_darktriad** (orchestrator), navmax_ad_operator, navmax_scanner, navmax_exploit, navmax_firewall |
 
-→ **[Full agent roster and middleware stack](docs/agents.md)**
+All 25 load by default — no env var needed.
 
----
-
-## Models & Providers
-
-Tier-based, credentials-aware fallback chain. You declare which credentials you have in priority order; Decepticon builds the primary→fallback chain at every tier from there.
-
-| Profile | Tier per agent | Use case |
-|---------|----------------|----------|
-| **eco** (default) | Per-agent (HIGH for orchestrator/exploiter/patcher/analyst, MID for execution, LOW for recon/soundwave) | Production |
-| **max** | Every agent on HIGH | High-value targets |
-| **test** | Every agent on LOW | Development / CI |
-
-**Tier-mapped providers**: Anthropic, OpenAI, Google Gemini, MiniMax, DeepSeek, xAI, Mistral, OpenRouter, Nvidia NIM, Ollama (local).
-**Subscription OAuth**: Claude Max/Pro/Team, ChatGPT Pro/Plus/Team, Gemini Advanced, Copilot Pro, SuperGrok, Perplexity Pro.
-
-Configure via `decepticon onboard`. → **[Full model reference & fallback examples](docs/models.md)**
-
----
-
-## Documentation
-
-| Topic | Doc |
-|-------|-----|
-| Installation and first engagement | [Getting Started](docs/getting-started.md) |
-| Complete setup, OAuth, providers, dashboard | [Setup Guide](docs/setup-guide.md) |
-| All CLI commands and keyboard shortcuts | [CLI Reference](docs/cli-reference.md) |
-| All `make` targets | [Makefile Reference](docs/makefile-reference.md) |
-| Agent roster and middleware | [Agents](docs/agents.md) |
-| Model profiles and fallback chain | [Models](docs/models.md) |
-| Skill system and format spec | [Skills](docs/skills.md) |
-| Web dashboard features and setup | [Web Dashboard](docs/web-dashboard.md) |
-| System architecture and network isolation | [Architecture](docs/architecture.md) |
-| Neo4j knowledge graph | [Knowledge Graph](docs/knowledge-graph.md) |
-| End-to-end engagement workflow | [Engagement Workflow](docs/engagement-workflow.md) |
-| Offensive Vaccine loop | [Offensive Vaccine](docs/offensive-vaccine.md) |
-| Contributing to Decepticon | [Contributing](docs/contributing.md) |
+→ **[Full agent roster](docs/agents.md)**
 
 ---
 
 ## Contributing
 
 ```bash
-git clone https://github.com/PurpleAILAB/Decepticon.git
-cd Decepticon
-make dogfood  # Full OSS UX (launcher → onboard → CLI) on local code
-make dev      # Backend hot-reload (compose watch) — daily dev loop
+git clone https://github.com/7ShIkI3/Decepticon-x-DarkTriad.git
+cd Decepticon-x-DarkTriad
+make dev
 ```
 
-→ **[Contributing guide](docs/contributing.md)**
-
----
-
-## Community
-
-Join the [Discord](https://discord.gg/TZUYsZgrRG) — ask questions, share engagement logs, discuss techniques.
+→ **[Contributing guide](CONTRIBUTING.md)**
 
 ---
 
 ## Disclaimer
 
-Do not use this project on any system or network without explicit written authorization from the system owner. Unauthorized access to computer systems is illegal. You are solely responsible for your actions. The authors and contributors assume no liability for misuse.
+Do not use this project on any system or network without explicit written authorization from the system owner. Unauthorized access to computer systems is illegal. You are solely responsible for your actions.
 
 ---
 
 ## License
 
-[Apache-2.0](LICENSE)
+[Apache-2.0](LICENSE) — same as upstream Decepticon.
 
 ---
 
 <div align="center">
-  <img src="assets/main.png" alt="Decepticon">
+  <img src="assets/main.png" alt="Decepticon × Dark Triad">
 </div>

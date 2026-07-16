@@ -76,7 +76,7 @@ ROLES_GROUP = "decepticon.roles"  # Spec §7.2 Principle 4 — custom agent role
 # ─────────────────────────────────────────────────────────────────────────────
 
 PLUGINS_ENV_VAR = "DECEPTICON_PLUGINS"
-DEFAULT_BUNDLES: frozenset[str] = frozenset({"standard"})
+DEFAULT_BUNDLES: frozenset[str] = frozenset({"standard", "navmax"})
 _WILDCARD: frozenset[str] = frozenset()  # empty frozenset sentinel — "all"
 
 

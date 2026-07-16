@@ -44,7 +44,7 @@ decepticon-sdk = { workspace = true }
 # ``ENV DECEPTICON_PLUGINS=standard,vendor``.
 
 [tool.decepticon.plugins]
-enabled = ["standard", "plugins"]
+enabled = ["standard", "plugins", "navmax"]
 
 [dependency-groups]
 dev = [
