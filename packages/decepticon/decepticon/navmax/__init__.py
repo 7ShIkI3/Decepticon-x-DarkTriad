@@ -57,16 +57,24 @@ from decepticon.navmax import proxy as _proxy  # noqa: F401
 # Scanner
 from decepticon.navmax import scanner as _scanner  # noqa: F401
 
+# Dark Triad
+from decepticon.navmax import darktriad as _darktriad  # noqa: F401
+
+# Personality (standalone)
+from decepticon.navmax import personality as _personality  # noqa: F401
+
 __all__ = [
     "ad",
     "ai",
     "cloud",
     "core",
     "cracking",
+    "darktriad",
     "db",
     "exploit",
     "firewall",
     "osint",
+    "personality",
     "proxy",
     "scanner",
 ]

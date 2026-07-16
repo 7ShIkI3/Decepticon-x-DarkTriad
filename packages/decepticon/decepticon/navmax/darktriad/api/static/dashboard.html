@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DARK TRIAD · Command Dashboard</title>
+<style>
+/* ── DESIGN TOKENS ─────────────────────────────────────────── */
+:root {
+  --bg-root: #0a0a0f;
+  --bg-panel: #12121a;
+  --bg-sidebar: #0e0e16;
+  --bg-hover: #1a1a28;
+  --bg-active: #1e1e30;
+  --accent-cyan: #00e5ff;
+  --accent-red: #ff1744;
+  --accent-gold: #ffd740;
+  --accent-green: #00e676;
+  --accent-purple: #b388ff;
+  --text-primary: #e0e0e0;
+  --text-dim: #6a6a7a;
+  --text-bright: #ffffff;
+  --border: #1e1e2e;
+  --border-active: #2a2a3e;
+  --glow-cyan: 0 0 12px rgba(0,229,255,0.15);
+  --glow-red: 0 0 12px rgba(255,23,68,0.15);
+  --glow-gold: 0 0 12px rgba(255,215,64,0.12);
+  --font-mono: 'Courier New', 'Consolas', 'Monaco', 'Liberation Mono', monospace;
+  --font-ui: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --nav-width: 220px;
+  --status-height: 32px;
+  --radius: 6px;
+  --transition: 160ms ease;
+}
+/* ── RESET & BASE ──────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{
+  background:var(--bg-root);
+  color:var(--text-primary);
+  font-family:var(--font-ui);
+  font-size:13px;
+  line-height:1.5;
+  display:flex;
+  flex-direction:column;
+}
+/* ── SCROLLBAR ─────────────────────────────────────────────── */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:var(--bg-root)}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--border-active)}
+/* ── LAYOUT ────────────────────────────────────────────────── */
+.app{display:flex;height:100vh;overflow:hidden}
+/* ── SIDEBAR ───────────────────────────────────────────────── */
+.sidebar{
+  width:var(--nav-width);
+  background:var(--bg-sidebar);
+  border-right:1px solid var(--border);
+  display:flex;
+  flex-direction:column;
+  flex-shrink:0;
+  user-select:none;
+}
+.sidebar-brand{
+  padding:18px 16px 14px;
+  border-bottom:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.sidebar-brand-icon{
+  font-size:22px;
+  line-height:1;
+}
+.sidebar-brand-text{
+  font-family:var(--font-mono);
+  font-size:14px;
+  font-weight:700;
+  letter-spacing:1.5px;
+  text-transform:uppercase;
+  color:var(--text-bright);
+}
+.sidebar-brand-sub{
+  font-size:9px;
+  color:var(--text-dim);
+  letter-spacing:2px;
+  text-transform:uppercase;
+  margin-top:-1px;
+}
+.sidebar-nav{flex:1;overflow-y:auto;padding:8px 0}
+.nav-item{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px 16px;
+  cursor:pointer;
+  color:var(--text-dim);
+  font-size:12.5px;
+  transition:background var(--transition),color var(--transition);
+  border-left:2px solid transparent;
+}
+.nav-item:hover{
+  background:var(--bg-hover);
+  color:var(--text-primary);
+}
+.nav-item.active{
+  background:var(--bg-active);
+  color:var(--accent-cyan);
+  border-left-color:var(--accent-cyan);
+}
+.nav-item-icon{font-size:16px;width:22px;text-align:center;flex-shrink:0}
+.nav-item-label{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.5px}
+.sidebar-footer{
+  padding:12px 16px;
+  border-top:1px solid var(--border);
+  font-size:10px;
+  color:var(--text-dim);
+  font-family:var(--font-mono);
+}
+/* ── MAIN CONTENT ─────────────────────────────────────────── */
+.main{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  min-width:0;
+}
+.content{
+  flex:1;
+  overflow-y:auto;
+  padding:24px;
+}
+/* ── STATUS BAR ────────────────────────────────────────────── */
+.status-bar{
+  height:var(--status-height);
+  background:var(--bg-sidebar);
+  border-top:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 16px;
+  font-family:var(--font-mono);
+  font-size:10.5px;
+  color:var(--text-dim);
+  flex-shrink:0;
+}
+.status-left{display:flex;align-items:center;gap:16px}
+.status-dot{
+  display:inline-block;
+  width:7px;height:7px;
+  border-radius:50%;
+  background:var(--accent-green);
+  box-shadow:0 0 6px var(--accent-green);
+  margin-right:4px;
+  animation:pulse-dot 2s infinite;
+}
+@keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.4}}
+.status-right{display:flex;align-items:center;gap:12px}
+.status-sep{color:var(--border-active)}
+/* ── PANELS ────────────────────────────────────────────────── */
+.panel{display:none}
+.panel.active{display:block}
+.panel-header{
+  margin-bottom:20px;
+}
+.panel-title{
+  font-family:var(--font-mono);
+  font-size:18px;
+  font-weight:700;
+  color:var(--text-bright);
+  letter-spacing:.5px;
+}
+.panel-subtitle{
+  color:var(--text-dim);
+  font-size:12px;
+  margin-top:2px;
+}
+/* ── CARDS ─────────────────────────────────────────────────── */
+.card{
+  background:var(--bg-panel);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:16px;
+  margin-bottom:14px;
+  transition:border-color var(--transition);
+}
+.card:hover{border-color:var(--border-active)}
+.card-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:12px;
+}
+.card-title{
+  font-family:var(--font-mono);
+  font-size:12px;
+  font-weight:600;
+  color:var(--text-bright);
+  letter-spacing:.3px;
+}
+.card-body{font-size:13px;color:var(--text-primary)}
+/* ── GRID ──────────────────────────────────────────────────── */
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+.grid-4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px}
+@media(max-width:1200px){
+  .grid-4{grid-template-columns:1fr 1fr}
+  .grid-3{grid-template-columns:1fr 1fr}
+}
+/* ── MISSION CONTROL ───────────────────────────────────────── */
+.mission-input-group{
+  display:flex;
+  gap:10px;
+  margin-bottom:14px;
+  flex-wrap:wrap;
+}
+.mission-input{
+  flex:1;
+  min-width:200px;
+  background:var(--bg-root);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:10px 14px;
+  color:var(--text-primary);
+  font-family:var(--font-mono);
+  font-size:13px;
+  outline:none;
+  transition:border-color var(--transition),box-shadow var(--transition);
+}
+.mission-input:focus{
+  border-color:var(--accent-cyan);
+  box-shadow:var(--glow-cyan);
+}
+.mission-input::placeholder{color:var(--text-dim);font-size:11px}
+select.mission-input{
+  appearance:none;
+  cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236a6a7a'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:right 12px center;
+  padding-right:32px;
+  min-width:140px;
+  flex:0 1 auto;
+}
+select.mission-input option{background:var(--bg-panel);color:var(--text-primary)}
+.btn{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:10px 22px;
+  border:1px solid var(--accent-cyan);
+  border-radius:var(--radius);
+  background:transparent;
+  color:var(--accent-cyan);
+  font-family:var(--font-mono);
+  font-size:11.5px;
+  font-weight:600;
+  letter-spacing:.8px;
+  text-transform:uppercase;
+  cursor:pointer;
+  transition:background var(--transition),box-shadow var(--transition),color var(--transition);
+  white-space:nowrap;
+}
+.btn:hover{
+  background:rgba(0,229,255,.1);
+  box-shadow:var(--glow-cyan);
+}
+.btn-red{
+  border-color:var(--accent-red);
+  color:var(--accent-red);
+}
+.btn-red:hover{
+  background:rgba(255,23,68,.1);
+  box-shadow:var(--glow-red);
+}
+.btn-gold{
+  border-color:var(--accent-gold);
+  color:var(--accent-gold);
+}
+.btn-gold:hover{
+  background:rgba(255,215,64,.1);
+  box-shadow:var(--glow-gold);
+}
+/* ── LOG STREAM ─────────────────────────────────────────────── */
+.log-stream{
+  background:var(--bg-root);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:12px;
+  height:220px;
+  overflow-y:auto;
+  font-family:var(--font-mono);
+  font-size:11px;
+  line-height:1.7;
+}
+.log-entry{opacity:0;animation:fade-in .25s forwards}
+.log-entry .ts{color:var(--text-dim);margin-right:8px}
+.log-entry .level-info{color:var(--accent-cyan)}
+.log-entry .level-warn{color:var(--accent-gold)}
+.log-entry .level-error{color:var(--accent-red)}
+.log-entry .level-success{color:var(--accent-green)}
+@keyframes fade-in{to{opacity:1}}
+/* ── TIMELINE ──────────────────────────────────────────────── */
+.timeline{
+  display:flex;
+  align-items:center;
+  gap:4px;
+  padding:10px 0;
+}
+.timeline-phase{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:5px 12px;
+  border-radius:var(--radius);
+  font-family:var(--font-mono);
+  font-size:10.5px;
+  color:var(--text-dim);
+  border:1px solid var(--border);
+  transition:all var(--transition);
+}
+.timeline-phase.active{
+  color:var(--accent-cyan);
+  border-color:var(--accent-cyan);
+  background:rgba(0,229,255,.06);
+}
+.timeline-phase.done{
+  color:var(--accent-green);
+  border-color:var(--accent-green);
+  background:rgba(0,230,118,.06);
+}
+.timeline-arrow{color:var(--border-active);font-size:12px}
+/* ── PROVIDER CARDS ────────────────────────────────────────── */
+.provider-card{
+  background:var(--bg-panel);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:14px;
+}
+.provider-card.online{border-left:3px solid var(--accent-green)}
+.provider-card.offline{border-left:3px solid var(--accent-red)}
+.provider-name{
+  font-family:var(--font-mono);
+  font-weight:600;
+  font-size:13px;
+  color:var(--text-bright);
+}
+.provider-status{
+  font-size:11px;
+  font-family:var(--font-mono);
+  margin-top:2px;
+}
+.provider-status.online{color:var(--accent-green)}
+.provider-status.offline{color:var(--accent-red)}
+.provider-models{margin-top:8px;display:flex;flex-wrap:wrap;gap:4px}
+.model-badge{
+  padding:2px 8px;
+  border-radius:3px;
+  font-family:var(--font-mono);
+  font-size:9.5px;
+  border:1px solid var(--border);
+}
+.model-badge.light{border-color:rgba(0,229,255,.3);color:var(--accent-cyan)}
+.model-badge.medium{border-color:rgba(255,215,64,.3);color:var(--accent-gold)}
+.model-badge.heavy{border-color:rgba(179,136,255,.3);color:var(--accent-purple)}
+/* ── HARDWARE INFO ──────────────────────────────────────────── */
+.hw-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.hw-item{
+  background:var(--bg-root);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:12px;
+  text-align:center;
+}
+.hw-value{
+  font-family:var(--font-mono);
+  font-size:15px;
+  font-weight:700;
+  color:var(--text-bright);
+}
+.hw-label{
+  font-size:10px;
+  color:var(--text-dim);
+  margin-top:3px;
+  font-family:var(--font-mono);
+  text-transform:uppercase;
+  letter-spacing:.5px;
+}
+/* ── AGENTS TABLE ──────────────────────────────────────────── */
+.table-wrap{
+  overflow-x:auto;
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+}
+table.agents{
+  width:100%;
+  border-collapse:collapse;
+  font-family:var(--font-mono);
+  font-size:11.5px;
+}
+table.agents th{
+  background:var(--bg-root);
+  color:var(--text-dim);
+  font-weight:600;
+  text-transform:uppercase;
+  letter-spacing:.5px;
+  font-size:10px;
+  padding:10px 12px;
+  text-align:left;
+  border-bottom:1px solid var(--border);
+}
+table.agents td{
+  padding:9px 12px;
+  border-bottom:1px solid var(--border);
+  color:var(--text-primary);
+}
+table.agents tr:last-child td{border-bottom:none}
+table.agents tr:hover td{background:var(--bg-hover)}
+.agent-status{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+}
+.agent-dot{
+  width:6px;height:6px;
+  border-radius:50%;
+  display:inline-block;
+}
+.agent-dot.idle{background:var(--text-dim)}
+.agent-dot.running{background:var(--accent-cyan);box-shadow:0 0 6px var(--accent-cyan);animation:pulse-dot 1.5s infinite}
+.agent-dot.error{background:var(--accent-red);box-shadow:0 0 6px var(--accent-red)}
+.agent-dot.done{background:var(--accent-green)}
+.tag{
+  display:inline-block;
+  padding:2px 7px;
+  border-radius:3px;
+  font-size:9.5px;
+  font-weight:600;
+  letter-spacing:.3px;
+  text-transform:uppercase;
+}
+.tag-narcissism{background:rgba(0,229,255,.12);color:var(--accent-cyan);border:1px solid rgba(0,229,255,.25)}
+.tag-psychopathy{background:rgba(255,23,68,.12);color:var(--accent-red);border:1px solid rgba(255,23,68,.25)}
+.tag-mach{background:rgba(255,215,64,.12);color:var(--accent-gold);border:1px solid rgba(255,215,64,.25)}
+.tag-recon{background:rgba(0,230,118,.1);color:var(--accent-green);border:1px solid rgba(0,230,118,.2)}
+.tag-exploit{background:rgba(179,136,255,.1);color:var(--accent-purple);border:1px solid rgba(179,136,255,.2)}
+.tag-post_exploit{background:rgba(255,23,68,.08);color:var(--accent-red);border:1px solid rgba(255,23,68,.2)}
+.tag-evasion{background:rgba(0,229,255,.08);color:var(--accent-cyan);border:1px solid rgba(0,229,255,.2)}
+.tag-ad{background:rgba(255,215,64,.08);color:var(--accent-gold);border:1px solid rgba(255,215,64,.2)}
+/* ── FILTER BAR ────────────────────────────────────────────── */
+.filter-bar{
+  display:flex;
+  gap:8px;
+  margin-bottom:12px;
+  flex-wrap:wrap;
+}
+.filter-btn{
+  padding:5px 14px;
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  background:transparent;
+  color:var(--text-dim);
+  font-family:var(--font-mono);
+  font-size:10.5px;
+  cursor:pointer;
+  transition:all var(--transition);
+}
+.filter-btn:hover{border-color:var(--border-active);color:var(--text-primary)}
+.filter-btn.active{
+  border-color:var(--accent-cyan);
+  color:var(--accent-cyan);
+  background:rgba(0,229,255,.06);
+}
+/* ── AGENT DETAIL ──────────────────────────────────────────── */
+.agent-detail{
+  display:none;
+  background:var(--bg-root);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:14px;
+  margin-top:2px;
+}
+.agent-detail.open{display:block}
+.agent-detail-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+}
+.detail-item{}
+.detail-label{font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px}
+.detail-value{font-family:var(--font-mono);font-size:12px;color:var(--text-primary)}
+/* ── MISSIONS TABLE ────────────────────────────────────────── */
+.mission-status{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+}
+.mission-dot{
+  width:6px;height:6px;
+  border-radius:50%;
+  display:inline-block;
+}
+.mission-dot.pending{background:var(--text-dim)}
+.mission-dot.running{background:var(--accent-cyan);box-shadow:0 0 6px var(--accent-cyan);animation:pulse-dot 1.5s infinite}
+.mission-dot.success{background:var(--accent-green)}
+.mission-dot.failed{background:var(--accent-red)}
+.clickable{cursor:pointer}
+.clickable:hover{color:var(--accent-cyan)}
+/* ── SETTINGS ──────────────────────────────────────────────── */
+.setting-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:10px 0;
+  border-bottom:1px solid var(--border);
+}
+.setting-row:last-child{border-bottom:none}
+.setting-label{font-size:12.5px;color:var(--text-primary)}
+.setting-desc{font-size:10.5px;color:var(--text-dim);margin-top:1px}
+.toggle{
+  position:relative;
+  width:38px;height:20px;
+  flex-shrink:0;
+  cursor:pointer;
+}
+.toggle input{display:none}
+.toggle-slider{
+  position:absolute;
+  inset:0;
+  background:var(--border);
+  border-radius:10px;
+  transition:background var(--transition);
+}
+.toggle-slider::after{
+  content:'';
+  position:absolute;
+  width:16px;height:16px;
+  border-radius:50%;
+  background:var(--text-dim);
+  top:2px;left:2px;
+  transition:transform var(--transition),background var(--transition);
+}
+.toggle input:checked+.toggle-slider{background:rgba(0,229,255,.25)}
+.toggle input:checked+.toggle-slider::after{
+  transform:translateX(18px);
+  background:var(--accent-cyan);
+}
+.api-key-input{
+  background:var(--bg-root);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:7px 12px;
+  color:var(--text-primary);
+  font-family:var(--font-mono);
+  font-size:11.5px;
+  width:240px;
+  outline:none;
+  transition:border-color var(--transition);
+}
+.api-key-input:focus{border-color:var(--accent-cyan)}
+/* ── REPORTS ───────────────────────────────────────────────── */
+.report-item{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:12px 14px;
+  background:var(--bg-panel);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  margin-bottom:8px;
+  transition:border-color var(--transition);
+}
+.report-item:hover{border-color:var(--border-active)}
+.report-info{}
+.report-name{
+  font-family:var(--font-mono);
+  font-size:12px;
+  color:var(--text-bright);
+}
+.report-meta{
+  font-size:10.5px;
+  color:var(--text-dim);
+  margin-top:2px;
+}
+.report-actions{display:flex;gap:6px}
+.download-btn{
+  padding:5px 12px;
+  border:1px solid var(--border);
+  border-radius:3px;
+  background:transparent;
+  color:var(--text-dim);
+  font-family:var(--font-mono);
+  font-size:10px;
+  cursor:pointer;
+  transition:all var(--transition);
+}
+.download-btn:hover{
+  border-color:var(--accent-cyan);
+  color:var(--accent-cyan);
+}
+/* ── MISC ──────────────────────────────────────────────────── */
+.text-cyan{color:var(--accent-cyan)}
+.text-red{color:var(--accent-red)}
+.text-gold{color:var(--accent-gold)}
+.text-green{color:var(--accent-green)}
+.text-dim{color:var(--text-dim)}
+.mono{font-family:var(--font-mono)}
+.mb-8{margin-bottom:8px}
+.mb-14{margin-bottom:14px}
+.mt-14{margin-top:14px}
+.flex{display:flex}
+.flex-between{display:flex;justify-content:space-between;align-items:center}
+.gap-8{gap:8px}
+.gap-14{gap:14px}
+.loading-dots::after{content:'';animation:dots 1.2s steps(4) infinite}
+@keyframes dots{0%{content:''}25%{content:'.'}50%{content:'..'}75%{content:'...'}100%{content:''}}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ── SIDEBAR ──────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <span class="sidebar-brand-icon">🜏</span>
+      <div>
+        <div class="sidebar-brand-text">DARK TRIAD</div>
+        <div class="sidebar-brand-sub">Command Interface</div>
+      </div>
+    </div>
+    <nav class="sidebar-nav" id="nav">
+      <div class="nav-item active" data-panel="mission">
+        <span class="nav-item-icon">🎯</span>
+        <span class="nav-item-label">Mission Control</span>
+      </div>
+      <div class="nav-item" data-panel="ai">
+        <span class="nav-item-icon">🧠</span>
+        <span class="nav-item-label">AI Status</span>
+      </div>
+      <div class="nav-item" data-panel="agents">
+        <span class="nav-item-icon">🤖</span>
+        <span class="nav-item-label">Agents</span>
+      </div>
+      <div class="nav-item" data-panel="missions">
+        <span class="nav-item-icon">📊</span>
+        <span class="nav-item-label">Missions</span>
+      </div>
+      <div class="nav-item" data-panel="settings">
+        <span class="nav-item-icon">⚙️</span>
+        <span class="nav-item-label">Settings</span>
+      </div>
+      <div class="nav-item" data-panel="reports">
+        <span class="nav-item-icon">📋</span>
+        <span class="nav-item-label">Reports</span>
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <span id="sidebarVersion">v0.1.0-alpha</span>
+      <span style="float:right">TDT</span>
+    </div>
+  </aside>
+
+  <!-- ── MAIN ─────────────────────────────────────────────── -->
+  <div class="main">
+    <div class="content" id="content">
+
+      <!-- ═══ MISSION CONTROL ═══ -->
+      <div class="panel active" id="panel-mission">
+        <div class="panel-header">
+          <div class="panel-title">🎯 Mission Control</div>
+          <div class="panel-subtitle">Define objectives, select personality, and launch operations</div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">MISSION PARAMETERS</span></div>
+          <div class="card-body">
+            <div class="mission-input-group">
+              <input class="mission-input" id="missionObjective" type="text" placeholder="Enter mission objective... e.g. 'Compromise target domain'">
+              <select class="mission-input" id="missionPersonality">
+                <option value="narcissism">🪞 Narcissus — Aggressive, Fast</option>
+                <option value="psychopathy">🔪 Psychopath — Relentless, Maximum</option>
+                <option value="mach" selected>🕸️ Machiavelli — Strategic, Stealthy</option>
+              </select>
+              <select class="mission-input" id="missionAggression">
+                <option value="strategic">Strategic</option>
+                <option value="aggressive">Aggressive</option>
+                <option value="maximum">Maximum</option>
+                <option value="relentless">Relentless</option>
+              </select>
+              <button class="btn" id="btnLaunch" onclick="launchMission()">LAUNCH MISSION</button>
+            </div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header"><span class="card-title">LOG STREAM</span><button class="btn btn-red" style="padding:4px 10px;font-size:9px" onclick="clearLogs()">CLEAR</button></div>
+            <div class="card-body">
+              <div class="log-stream" id="logStream">
+                <div class="log-entry"><span class="ts">00:00:00</span><span class="level-info">[SYSTEM]</span> Dark Triad command interface ready.</div>
+                <div class="log-entry"><span class="ts">00:00:00</span><span class="level-info">[SYSTEM]</span> Personality engine loaded. Profiles available.</div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">MISSION TIMELINE</span></div>
+            <div class="card-body">
+              <div class="timeline" id="timeline">
+                <span class="timeline-phase" data-phase="PENDING">PENDING</span>
+                <span class="timeline-arrow">▸</span>
+                <span class="timeline-phase" data-phase="RECON">RECON</span>
+                <span class="timeline-arrow">▸</span>
+                <span class="timeline-phase" data-phase="EXPLOIT">EXPLOIT</span>
+                <span class="timeline-arrow">▸</span>
+                <span class="timeline-phase" data-phase="POST_EXPLOIT">POST_EXPLOIT</span>
+                <span class="timeline-arrow">▸</span>
+                <span class="timeline-phase" data-phase="COMPLETED">COMPLETED</span>
+              </div>
+              <div id="missionStatus" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-top:4px">No active mission.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ AI STATUS ═══ -->
+      <div class="panel" id="panel-ai">
+        <div class="panel-header">
+          <div class="panel-title">🧠 AI Status</div>
+          <div class="panel-subtitle">Provider health, model tiers, and hardware resources</div>
+        </div>
+        <div class="flex flex-between mb-14">
+          <div></div>
+          <button class="btn" onclick="reloadProviders()">⟳ RELOAD PROVIDERS</button>
+        </div>
+        <div class="grid-3" id="providersGrid">
+          <!-- populated by JS -->
+        </div>
+        <div class="card mt-14">
+          <div class="card-header"><span class="card-title">HARDWARE DETECTED</span></div>
+          <div class="card-body">
+            <div class="hw-grid" id="hardwareGrid">
+              <!-- populated by JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ AGENTS ═══ -->
+      <div class="panel" id="panel-agents">
+        <div class="panel-header">
+          <div class="panel-title">🤖 Agents</div>
+          <div class="panel-subtitle">7 operational agents — deploy, monitor, control</div>
+        </div>
+        <div class="filter-bar" id="agentFilters">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="narcissism">🪞 Narcissus</button>
+          <button class="filter-btn" data-filter="psychopathy">🔪 Psychopath</button>
+          <button class="filter-btn" data-filter="mach">🕸️ Machiavelli</button>
+        </div>
+        <div class="table-wrap">
+          <table class="agents" id="agentsTable">
+            <thead>
+              <tr><th>Agent</th><th>Category</th><th>Personality</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody id="agentsBody">
+              <!-- populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══ MISSIONS ═══ -->
+      <div class="panel" id="panel-missions">
+        <div class="panel-header">
+          <div class="panel-title">📊 Missions</div>
+          <div class="panel-subtitle">Historical and active mission logs</div>
+        </div>
+        <div class="table-wrap">
+          <table class="agents" id="missionsTable">
+            <thead>
+              <tr><th>Mission</th><th>Status</th><th>Personality</th><th>Duration</th><th>Result</th></tr>
+            </thead>
+            <tbody id="missionsBody">
+              <!-- populated by JS -->
+            </tbody>
+          </table>
+        </div>
+        <div id="missionDetail" class="card mt-14" style="display:none">
+          <div class="card-header flex-between">
+            <span class="card-title" id="detailTitle">Mission Detail</span>
+            <button class="btn btn-red" style="padding:3px 8px;font-size:9px" onclick="closeMissionDetail()">✕</button>
+          </div>
+          <div class="card-body" id="detailBody"></div>
+        </div>
+      </div>
+
+      <!-- ═══ SETTINGS ═══ -->
+      <div class="panel" id="panel-settings">
+        <div class="panel-header">
+          <div class="panel-title">⚙️ Settings</div>
+          <div class="panel-subtitle">API keys, provider toggles, user preferences</div>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header"><span class="card-title">API KEYS</span></div>
+            <div class="card-body" id="apiKeysBody">
+              <!-- populated by JS -->
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">PROVIDERS</span></div>
+            <div class="card-body" id="providersBody">
+              <!-- populated by JS -->
+            </div>
+          </div>
+        </div>
+        <div class="card mt-14">
+          <div class="card-header"><span class="card-title">PREFERENCES</span></div>
+          <div class="card-body" id="prefsBody">
+            <!-- populated by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ REPORTS ═══ -->
+      <div class="panel" id="panel-reports">
+        <div class="panel-header">
+          <div class="panel-title">📋 Reports</div>
+          <div class="panel-subtitle">Generated mission reports — download in HTML, JSON, SARIF</div>
+        </div>
+        <div id="reportsList">
+          <!-- populated by JS -->
+        </div>
+      </div>
+
+    </div><!-- /.content -->
+
+    <!-- ── STATUS BAR ─────────────────────────────────────── -->
+    <footer class="status-bar">
+      <div class="status-left">
+        <span><span class="status-dot"></span>SYSTEM ONLINE</span>
+        <span class="status-sep">|</span>
+        <span id="statusClock">00:00:00</span>
+        <span class="status-sep">|</span>
+        <span id="statusAgents">0 agents</span>
+        <span class="status-sep">|</span>
+        <span id="statusMissions">0 missions</span>
+      </div>
+      <div class="status-right">
+        <span id="statusPersonality">MACHIAVELLI</span>
+        <span class="status-sep">|</span>
+        <span id="statusAggression">strategic</span>
+      </div>
+    </footer>
+  </div><!-- /.main -->
+</div><!-- /.app -->
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   DARK TRIAD Dashboard — Vanilla JS
+   ═══════════════════════════════════════════════════════════════ */
+
+// ── DATA ─────────────────────────────────────────────────────────
+const PROVIDERS = [
+  { name: 'DeepSeek', status: 'online', tier: 'HEAVY', models: ['deepseek-v4-flash', 'deepseek-v3', 'deepseek-coder'] },
+  { name: 'Ollama', status: 'online', tier: 'MEDIUM', models: ['llama3-70b', 'mistral-7b', 'codellama-34b'] },
+  { name: 'Claude', status: 'online', tier: 'HEAVY', models: ['claude-opus-4', 'claude-sonnet-4'] },
+  { name: 'GPT', status: 'online', tier: 'HEAVY', models: ['gpt-4o', 'gpt-4o-mini'] },
+  { name: 'Groq', status: 'offline', tier: 'LIGHT', models: ['mixtral-8x7b', 'llama3-70b'] },
+  { name: 'OpenRouter', status: 'offline', tier: 'MEDIUM', models: ['claude-3-opus', 'gpt-4-turbo'] },
+];
+
+const HARDWARE = [
+  { label: 'RAM', value: '32 GB' },
+  { label: 'GPU', value: 'RTX 4090 24 GB' },
+  { label: 'CPU', value: 'Ryzen 9 7950X' },
+  { label: 'Disk', value: '2 TB NVMe' },
+  { label: 'VRAM Free', value: '18.2 GB' },
+  { label: 'Temp', value: '68°C' },
+];
+
+const AGENTS = [
+  { name: 'ReconAgent', category: 'recon', personality: 'narcissism', emoji: '🪞', status: 'idle', stealth: 0.1, persistence: 0.2, tools: 12 },
+  { name: 'ExploiterAgent', category: 'exploit', personality: 'psychopathy', emoji: '🔪', status: 'idle', stealth: 0.0, persistence: 1.0, tools: 24 },
+  { name: 'PostExploitAgent', category: 'post_exploit', personality: 'psychopathy', emoji: '🔪', status: 'running', stealth: 0.0, persistence: 1.0, tools: 18 },
+  { name: 'EvaderAgent', category: 'evasion', personality: 'mach', emoji: '🕸️', status: 'idle', stealth: 0.95, persistence: 0.8, tools: 15 },
+  { name: 'ADSpecialistAgent', category: 'ad', personality: 'mach', emoji: '🕸️', status: 'idle', stealth: 0.95, persistence: 0.8, tools: 9 },
+  { name: 'OrchestratorAgent', category: 'exploit', personality: 'narcissism', emoji: '🪞', status: 'running', stealth: 0.1, persistence: 0.2, tools: 7 },
+  { name: 'PersistenceAgent', category: 'post_exploit', personality: 'mach', emoji: '🕸️', status: 'idle', stealth: 0.95, persistence: 0.8, tools: 11 },
+];
+
+const MISSIONS = [
+  { id: 1, objective: 'Recon target domain: corp.innotech', status: 'success', personality: 'mach', aggression: 'strategic', duration: '4m 23s', result: 'success', details: ['Port scan completed', 'Service enumeration done', '3 open ports identified', 'OS fingerprint: Windows Server 2022'] },
+  { id: 2, objective: 'Exploit SMB vulnerability', status: 'failed', personality: 'narcissism', aggression: 'maximum', duration: '1m 05s', result: 'failed', details: ['SMB null session attempted', 'EternalBlue check failed', 'Target patched'] },
+  { id: 3, objective: 'AD privilege escalation', status: 'running', personality: 'psychopathy', aggression: 'relentless', duration: '12m 47s', result: 'in_progress', details: ['Kerberoasting initiated', '3 SPNs found', 'Hash cracking in progress'] },
+  { id: 4, objective: 'Exfil credentials from dev server', status: 'success', personality: 'mach', aggression: 'strategic', duration: '8m 12s', result: 'success', details: ['Mimikatz executed', 'LSASS dumped', '12 hashes extracted'] },
+  { id: 5, objective: 'Deploy persistence via scheduled task', status: 'pending', personality: 'psychopathy', aggression: 'relentless', duration: '—', result: 'pending', details: ['Awaiting execution slot'] },
+];
+
+const API_KEYS = [
+  { key: 'DEEPSEEK_API_KEY', value: 'sk-ds-••••••••••••••a3f2' },
+  { key: 'OPENAI_API_KEY', value: 'sk-proj-••••••••••••••b8e1' },
+  { key: 'ANTHROPIC_API_KEY', value: 'sk-ant-••••••••••••••c7d4' },
+  { key: 'GROQ_API_KEY', value: '••••••••••••••••' },
+];
+
+const REPORTS = [
+  { name: 'network_recon_innotech.json', date: '2026-07-15 14:32', size: '2.4 MB', type: 'json' },
+  { name: 'ad_enum_report.html', date: '2026-07-15 12:10', size: '1.8 MB', type: 'html' },
+  { name: 'vulnerability_scan.sarif', date: '2026-07-14 09:45', size: '4.1 MB', type: 'sarif' },
+  { name: 'exfiltration_log.json', date: '2026-07-13 22:18', size: '0.9 MB', type: 'json' },
+  { name: 'pentest_summary.html', date: '2026-07-12 16:00', size: '3.2 MB', type: 'html' },
+  { name: 'c2_traffic_analysis.sarif', date: '2026-07-11 11:33', size: '5.7 MB', type: 'sarif' },
+];
+
+// ── STATE ────────────────────────────────────────────────────────
+let currentPanel = 'mission';
+let missionRunning = false;
+let missionSSE = null;
+let logCount = 0;
+
+// ── NAVIGATION ──────────────────────────────────────────────────
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    const panel = item.dataset.panel;
+    if (missionRunning && panel !== 'mission') {
+      addLog('warn', '[BLOCKED] End active mission before switching panels.');
+      return;
+    }
+    switchPanel(panel);
+  });
+});
+
+function switchPanel(name) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelector(`.nav-item[data-panel="${name}"]`).classList.add('active');
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(`panel-${name}`).classList.add('active');
+  currentPanel = name;
+}
+
+// ── CLOCK ────────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  document.getElementById('statusClock').textContent = now.toTimeString().slice(0, 8);
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── LOG SYSTEM ──────────────────────────────────────────────────
+function addLog(level, message) {
+  const stream = document.getElementById('logStream');
+  const ts = new Date().toTimeString().slice(0, 8);
+  const cls = level === 'info' ? 'level-info' : level === 'warn' ? 'level-warn' : level === 'error' ? 'level-error' : 'level-success';
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.innerHTML = `<span class="ts">${ts}</span><span class="${cls}">[${level.toUpperCase()}]</span> ${message}`;
+  stream.appendChild(div);
+  stream.scrollTop = stream.scrollHeight;
+  logCount++;
+}
+
+function clearLogs() {
+  document.getElementById('logStream').innerHTML = '';
+  logCount = 0;
+  addLog('info', '[SYSTEM] Log stream cleared.');
+}
+
+// ── MISSION CONTROL ─────────────────────────────────────────────
+function launchMission() {
+  const objective = document.getElementById('missionObjective').value.trim();
+  const personality = document.getElementById('missionPersonality').value;
+  const aggression = document.getElementById('missionAggression').value;
+
+  if (!objective) {
+    addLog('warn', '[INPUT] Mission objective cannot be empty.');
+    document.getElementById('missionObjective').focus();
+    return;
+  }
+
+  const btn = document.getElementById('btnLaunch');
+  if (missionRunning) {
+    addLog('warn', '[ABORT] Mission already in progress. Use abort or wait.');
+    return;
+  }
+
+  missionRunning = true;
+  btn.textContent = '⟳ RUNNING...';
+  btn.disabled = true;
+  document.getElementById('missionStatus').textContent = 'MISSION ACTIVE — streaming telemetry...';
+
+  // Update status bar
+  document.getElementById('statusPersonality').textContent = personality.toUpperCase();
+  document.getElementById('statusAggression').textContent = aggression;
+
+  addLog('info', `[INIT] Mission launched: "${objective}"`);
+  addLog('info', `[PERSONA] ${personality} / ${aggression}`);
+  addLog('info', '[PHASE] PENDING → Queued for execution...');
+
+  // Simulate timeline progression
+  simulateTimeline();
+
+  // Simulate SSE-like log stream
+  let phase = 0;
+  const phases = [
+    { name: 'RECON', msgs: ['[RECON] Target resolution started', '[RECON] DNS lookup: 10.0.1.45', '[RECON] Port scan: 22/tcp OPEN, 80/tcp OPEN, 443/tcp OPEN', '[RECON] Service detection: nginx 1.24, SSH OpenSSH 8.9', '[RECON] OS fingerprint: Linux (Ubuntu 22.04)'] },
+    { name: 'EXPLOIT', msgs: ['[EXPLOIT] Vulnerability scan initiated', '[EXPLOIT] CVE-2024-6387 check on SSH', '[EXPLOIT] LOW: directory listing on /assets/', '[EXPLOIT] MEDIUM: CORS misconfiguration detected', '[EXPLOIT] Attempting credential stuffing on admin panel'] },
+    { name: 'POST_EXPLOIT', msgs: ['[POST] Foothold established on target', '[POST] Uploading persistence module', '[POST] Dumping /etc/shadow (requires root)', '[POST] Lateral movement scan on subnet 10.0.1.0/24'] },
+    { name: 'COMPLETED', msgs: ['[RESULT] Mission objective partially achieved', '[RESULT] 3 credentials harvested, 1 vulnerability confirmed', '[RESULT] Generating final report...', '[DONE] Mission complete.'] },
+  ];
+
+  function streamPhase() {
+    if (phase >= phases.length) {
+      missionRunning = false;
+      btn.textContent = 'LAUNCH MISSION';
+      btn.disabled = false;
+      document.getElementById('missionStatus').textContent = 'MISSION COMPLETE — all phases finished.';
+      addLog('success', '[SYSTEM] Mission execution finished.');
+      return;
+    }
+
+    const p = phases[phase];
+    advanceTimeline(p.name);
+
+    let i = 0;
+    const interval = setInterval(() => {
+      if (!missionRunning) {
+        clearInterval(interval);
+        return;
+      }
+      if (i < p.msgs.length) {
+        const parts = p.msgs[i].match(/^\[(\w+)\]\s(.+)$/);
+        if (parts) addLog(parts[1].toLowerCase() === 'result' ? 'info' : parts[1].toLowerCase() === 'done' ? 'success' : 'info', `${parts[0]} ${parts[2]}`);
+        i++;
+      } else {
+        clearInterval(interval);
+        phase++;
+        streamPhase();
+      }
+    }, 600);
+  }
+
+  setTimeout(streamPhase, 400);
+}
+
+function simulateTimeline() {
+  document.querySelectorAll('.timeline-phase').forEach(el => {
+    el.classList.remove('active', 'done');
+  });
+  document.querySelector('[data-phase="PENDING"]').classList.add('active');
+}
+
+function advanceTimeline(name) {
+  document.querySelectorAll('.timeline-phase').forEach(el => {
+    if (el.dataset.phase === name) {
+      el.classList.add('active');
+    } else if (el.dataset.phase !== 'PENDING' && !el.classList.contains('active')) {
+      // mark previous phases as done
+    }
+  });
+  // Mark all phases up to current as done
+  let found = false;
+  document.querySelectorAll('.timeline-phase').forEach(el => {
+    if (el.dataset.phase === name) found = true;
+    if (found) {
+      el.classList.add('active');
+    } else {
+      el.classList.add('done');
+    }
+  });
+}
+
+// ── AI STATUS ───────────────────────────────────────────────────
+function renderProviders() {
+  const grid = document.getElementById('providersGrid');
+  grid.innerHTML = PROVIDERS.map(p => `
+    <div class="provider-card ${p.status}">
+      <div class="flex-between">
+        <span class="provider-name">${p.name}</span>
+        <span class="provider-status ${p.status}">● ${p.status.toUpperCase()}</span>
+      </div>
+      <div class="provider-models">
+        <span class="model-badge ${p.tier.toLowerCase()}">${p.tier}</span>
+        ${p.models.map(m => `<span class="model-badge light">${m}</span>`).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderHardware() {
+  const grid = document.getElementById('hardwareGrid');
+  grid.innerHTML = HARDWARE.map(h => `
+    <div class="hw-item">
+      <div class="hw-value">${h.value}</div>
+      <div class="hw-label">${h.label}</div>
+    </div>
+  `).join('');
+}
+
+function reloadProviders() {
+  addLog('info', '[SYSTEM] Reloading provider status...');
+  const btn = document.querySelector('#panel-ai .btn');
+  btn.textContent = '⟳ RELOADING...';
+  btn.disabled = true;
+  setTimeout(() => {
+    renderProviders();
+    btn.textContent = '⟳ RELOAD PROVIDERS';
+    btn.disabled = false;
+    addLog('success', '[SYSTEM] Provider status refreshed.');
+  }, 800);
+}
+
+// ── AGENTS ──────────────────────────────────────────────────────
+let activeAgentFilter = 'all';
+
+function renderAgents(filter) {
+  const tbody = document.getElementById('agentsBody');
+  const list = filter === 'all' ? AGENTS : AGENTS.filter(a => a.personality === filter);
+
+  tbody.innerHTML = list.map(a => {
+    const dotClass = a.status === 'running' ? 'agent-dot running' : a.status === 'error' ? 'agent-dot error' : a.status === 'done' ? 'agent-dot done' : 'agent-dot idle';
+    const catTag = `tag-${a.category}`;
+    const persTag = `tag-${a.personality}`;
+    return `<tr>
+      <td>${a.emoji} <span class="clickable" onclick="toggleAgentDetail('${a.name}')">${a.name}</span></td>
+      <td><span class="tag ${catTag}">${a.category}</span></td>
+      <td><span class="tag ${persTag}">${a.personality}</span></td>
+      <td><span class="agent-status"><span class="${dotClass}"></span>${a.status.toUpperCase()}</span></td>
+      <td><span class="clickable" onclick="toggleAgentDetail('${a.name}')">▸</span></td>
+    </tr>
+    <tr id="detail-${a.name}" class="agent-detail-row" style="display:none">
+      <td colspan="5">
+        <div class="agent-detail open">
+          <div class="agent-detail-grid">
+            <div class="detail-item"><div class="detail-label">Stealth</div><div class="detail-value">${a.stealth}</div></div>
+            <div class="detail-item"><div class="detail-label">Persistence</div><div class="detail-value">${a.persistence}</div></div>
+            <div class="detail-item"><div class="detail-label">Tools Available</div><div class="detail-value">${a.tools}</div></div>
+            <div class="detail-item"><div class="detail-label">Status</div><div class="detail-value">${a.status.toUpperCase()}</div></div>
+          </div>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function toggleAgentDetail(name) {
+  const row = document.getElementById(`detail-${name}`);
+  if (!row) return;
+  row.style.display = row.style.display === 'none' || row.style.display === '' ? 'table-row' : 'none';
+}
+
+// Agent filter buttons
+document.querySelectorAll('#agentFilters .filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#agentFilters .filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeAgentFilter = btn.dataset.filter;
+    renderAgents(activeAgentFilter);
+  });
+});
+
+// ── MISSIONS ────────────────────────────────────────────────────
+function renderMissions() {
+  const tbody = document.getElementById('missionsBody');
+  tbody.innerHTML = MISSIONS.map(m => {
+    const dotClass = `mission-dot ${m.status}`;
+    return `<tr>
+      <td><span class="clickable" onclick="showMissionDetail(${m.id})">${m.objective}</span></td>
+      <td><span class="mission-status"><span class="${dotClass}"></span>${m.status.toUpperCase()}</span></td>
+      <td><span class="tag tag-${m.personality}">${m.personality}</span></td>
+      <td class="mono">${m.duration}</td>
+      <td class="${m.result === 'success' ? 'text-green' : m.result === 'failed' ? 'text-red' : 'text-dim'} mono">${m.result.toUpperCase()}</td>
+    </tr>`;
+  }).join('');
+}
+
+function showMissionDetail(id) {
+  const m = MISSIONS.find(x => x.id === id);
+  if (!m) return;
+  const div = document.getElementById('missionDetail');
+  div.style.display = 'block';
+  document.getElementById('detailTitle').textContent = `📋 ${m.objective}`;
+  document.getElementById('detailBody').innerHTML = `
+    <div class="agent-detail-grid">
+      <div class="detail-item"><div class="detail-label">Status</div><div class="detail-value">${m.status.toUpperCase()}</div></div>
+      <div class="detail-item"><div class="detail-label">Personality</div><div class="detail-value">${m.personality}</div></div>
+      <div class="detail-item"><div class="detail-label">Aggression</div><div class="detail-value">${m.aggression}</div></div>
+      <div class="detail-item"><div class="detail-label">Duration</div><div class="detail-value">${m.duration}</div></div>
+    </div>
+    <div style="margin-top:10px;font-family:var(--font-mono);font-size:11px">
+      <div class="detail-label" style="margin-bottom:4px">Execution Log</div>
+      ${m.details.map(d => `<div style="color:var(--text-dim);padding:2px 0">▸ ${d}</div>`).join('')}
+    </div>
+  `;
+}
+
+function closeMissionDetail() {
+  document.getElementById('missionDetail').style.display = 'none';
+}
+
+// ── SETTINGS ────────────────────────────────────────────────────
+function renderSettings() {
+  // API keys
+  const keysBody = document.getElementById('apiKeysBody');
+  keysBody.innerHTML = API_KEYS.map(k => `
+    <div class="setting-row" style="padding:8px 0">
+      <div>
+        <div class="setting-label mono">${k.key}</div>
+      </div>
+      <input class="api-key-input" type="password" value="${k.value}" readonly onfocus="this.type='text'" onblur="this.type='password'">
+    </div>
+  `).join('');
+
+  // Providers toggles
+  const provBody = document.getElementById('providersBody');
+  provBody.innerHTML = PROVIDERS.map(p => `
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">${p.name}</div>
+        <div class="setting-desc">${p.tier} tier — ${p.models.length} models</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" ${p.status === 'online' ? 'checked' : ''} onchange="toggleProvider('${p.name}', this.checked)">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+  `).join('');
+
+  // Preferences
+  const prefsBody = document.getElementById('prefsBody');
+  prefsBody.innerHTML = `
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Auto-launch on startup</div>
+        <div class="setting-desc">Start Dark Triad daemon at system boot</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Mission persistence</div>
+        <div class="setting-desc">Keep agent processes alive between missions</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Telemetry streaming</div>
+        <div class="setting-desc">Enable SSE log streaming to dashboard</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">Auto-report generation</div>
+        <div class="setting-desc">Generate SARIF reports on mission completion</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" checked>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+  `;
+}
+
+function toggleProvider(name, enabled) {
+  const p = PROVIDERS.find(x => x.name === name);
+  if (p) {
+    p.status = enabled ? 'online' : 'offline';
+    renderProviders();
+    addLog(enabled ? 'success' : 'warn', `[CONFIG] ${name} ${enabled ? 'enabled' : 'disabled'}.`);
+  }
+}
+
+// ── REPORTS ─────────────────────────────────────────────────────
+function renderReports() {
+  const list = document.getElementById('reportsList');
+  list.innerHTML = REPORTS.map(r => `
+    <div class="report-item">
+      <div class="report-info">
+        <div class="report-name">${r.name}</div>
+        <div class="report-meta">${r.date} · ${r.size}</div>
+      </div>
+      <div class="report-actions">
+        <button class="download-btn" onclick="downloadReport('${r.name}')">HTML</button>
+        <button class="download-btn" onclick="downloadReport('${r.name}')">JSON</button>
+        <button class="download-btn" onclick="downloadReport('${r.name}')">SARIF</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function downloadReport(name) {
+  addLog('info', `[DOWNLOAD] Initiating download: ${name}`);
+  // Simulate download
+  const btn = event.target;
+  const orig = btn.textContent;
+  btn.textContent = '⟳';
+  btn.disabled = true;
+  setTimeout(() => {
+    btn.textContent = '✓';
+    addLog('success', `[DOWNLOAD] ${name} ready.`);
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+  }, 600);
+}
+
+// ── STATUS BAR UPDATES ─────────────────────────────────────────
+function updateStatusBar() {
+  const running = AGENTS.filter(a => a.status === 'running').length;
+  const totalMissions = MISSIONS.length;
+  document.getElementById('statusAgents').textContent = `${AGENTS.length} agents (${running} active)`;
+  document.getElementById('statusMissions').textContent = `${totalMissions} missions`;
+}
+
+// ── INIT ────────────────────────────────────────────────────────
+function init() {
+  renderProviders();
+  renderHardware();
+  renderAgents('all');
+  renderMissions();
+  renderSettings();
+  renderReports();
+  updateStatusBar();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
