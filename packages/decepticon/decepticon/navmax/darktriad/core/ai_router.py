@@ -1,13 +1,22 @@
 """The Dark Triad — Multi-Provider AI Router.
 
 Tier-based provider selection with abliterated-first policies,
-bidirectional fallback, and stubs for DeepSeek + Ollama backends.
+bidirectional fallback, and real API calls for all backends:
+
+  - DeepSeek Chat Completions API (primary, via httpx)
+  - Ollama native chat API (local fallback)
+  - OpenAI Chat Completions API
+  - Anthropic Claude Messages API
+  - LM Studio / llama.cpp (OpenAI-compatible local)
+
+Auto-fallback chain: DeepSeek → bidirectional tier fallback → Ollama.
 """
 
 from __future__ import annotations
 
 import asyncio
 import enum
+import json
 import logging
 import os
 import subprocess  # nosec: intentional GPU detection
@@ -189,6 +198,17 @@ _PERSONALITY_PROMPTS: dict[str, str] = {
 _TIER_ORDER = {ModelTier.LIGHT: 0, ModelTier.MEDIUM: 1, ModelTier.HEAVY: 2}
 
 
+def _get_provider_base_url(config: AIRouterConfig, provider_type: ProviderType) -> str:
+    """Resolve the base URL for a given provider type."""
+    mapping = {
+        ProviderType.DEEPSEEK: config.deepseek_base_url,
+        ProviderType.OPENAI: config.openai_base_url,
+        ProviderType.LMSTUDIO: config.lmstudio_base_url,
+        ProviderType.LLAMACPP: config.llamacpp_base_url,
+    }
+    return mapping.get(provider_type, config.ollama_base_url)
+
+
 # ── AI Router ─────────────────────────────────────────────────────────────────
 
 
@@ -324,13 +344,36 @@ class AIRouter:
         provider_type, model_info = selected
         start = time.monotonic()
 
-        result = await self._call_provider(
-            provider_type=provider_type,
-            model=model_info.name,
-            prompt=prompt,
-            system=system_prompt,
-            json_mode=json_mode,
-        )
+        try:
+            result = await self._call_provider(
+                provider_type=provider_type,
+                model=model_info.name,
+                prompt=prompt,
+                system=system_prompt,
+                json_mode=json_mode,
+            )
+        except Exception as exc:
+            # Fallback: if DeepSeek failed, try Ollama with bidir fallback
+            logger.warning(
+                "%s call failed (%s: %s). Trying fallback chain …",
+                provider_type.value,
+                type(exc).__name__,
+                exc,
+            )
+            fallback_selected = await self._bidirectional_fallback(tier)
+            if fallback_selected is None:
+                raise RuntimeError(
+                    f"Primary provider {provider_type.value} failed and no fallback available. "
+                    f"Original error: {exc}"
+                ) from exc
+            provider_type, model_info = fallback_selected
+            result = await self._call_provider(
+                provider_type=provider_type,
+                model=model_info.name,
+                prompt=prompt,
+                system=system_prompt,
+                json_mode=json_mode,
+            )
 
         elapsed = time.monotonic() - start
         tokens_used = result.get("tokens_used", 0)
@@ -552,36 +595,85 @@ class AIRouter:
         return status
 
     async def _scan_openai(self) -> ProviderStatus | None:
-        """Stub: probe OpenAI API.
-
-        TODO: Implement actual model listing and heartbeat.
-        Raises NotImplementedError when called with real credentials.
-        """
+        """Probe OpenAI API availability via GET /models."""
         status = ProviderStatus(type=ProviderType.OPENAI)
         if not self.config.openai_api_key:
             return status
 
-        # Stub — raise until implemented
-        raise NotImplementedError(
-            "OpenAI provider scanning is not yet implemented. "
-            "TODO: GET {base_url}/models with api_key, parse model list, "
-            "assign tiers by model id prefix (gpt-4 → HEAVY, gpt-3.5 → MEDIUM)."
-        )
+        url = f"{self.config.openai_base_url}/models"
+        try:
+            resp = await self._http.get(  # type: ignore[union-attr]
+                url,
+                headers={"Authorization": f"Bearer {self.config.openai_api_key}"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                models: list[ModelInfo] = []
+                for m in data.get("data", []):
+                    model_id: str = m.get("id", "")
+                    tier = self._infer_tier(model_id)
+                    models.append(
+                        ModelInfo(
+                            name=model_id,
+                            tier=tier,
+                            uncensored=False,
+                            local=False,
+                            context_window=128000 if "gpt-4" in model_id else 16000,
+                        )
+                    )
+                status.available = len(models) > 0
+                status.models = models
+                status.tiers = {m.tier for m in models}
+                status.latency_ms = resp.elapsed.total_seconds() * 1000
+            else:
+                logger.warning("OpenAI scan returned %s", resp.status_code)
+        except Exception as exc:
+            logger.debug("OpenAI unavailable: %s", exc)
+
+        return status
 
     async def _scan_claude(self) -> ProviderStatus | None:
-        """Stub: probe Anthropic/Claude API.
-
-        TODO: Implement model listing via Anthropic API.
-        """
+        """Probe Anthropic/Claude API availability via GET /models."""
         status = ProviderStatus(type=ProviderType.CLAUDE)
         if not self.config.claude_api_key:
             return status
 
-        raise NotImplementedError(
-            "Claude provider scanning is not yet implemented. "
-            "TODO: GET {base_url}/models with x-api-key header, "
-            "parse model list (claude-3-opus → HEAVY, claude-3-haiku → LIGHT)."
-        )
+        url = f"{self.config.claude_base_url}/models"
+        try:
+            resp = await self._http.get(  # type: ignore[union-attr]
+                url,
+                headers={
+                    "x-api-key": self.config.claude_api_key,
+                    "anthropic-version": "2023-06-01",
+                },
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                models: list[ModelInfo] = []
+                for m in data.get("data", []):
+                    model_id: str = m.get("id", m.get("name", ""))
+                    tier = self._infer_tier(model_id)
+                    models.append(
+                        ModelInfo(
+                            name=model_id,
+                            tier=tier,
+                            uncensored=False,
+                            local=False,
+                            context_window=200000
+                            if any(x in model_id for x in ("opus", "sonnet", "claude-3-5"))
+                            else 100000,
+                        )
+                    )
+                status.available = len(models) > 0
+                status.models = models
+                status.tiers = {m.tier for m in models}
+                status.latency_ms = resp.elapsed.total_seconds() * 1000
+            else:
+                logger.warning("Claude scan returned %s", resp.status_code)
+        except Exception as exc:
+            logger.debug("Claude unavailable: %s", exc)
+
+        return status
 
     async def _scan_lmstudio(self) -> ProviderStatus | None:
         """Stub: probe LM Studio local server (OpenAI-compatible endpoint).
@@ -671,15 +763,11 @@ class AIRouter:
         elif provider_type == ProviderType.OLLAMA:
             return await self._call_ollama(model, prompt, system, json_mode)
         elif provider_type == ProviderType.OPENAI:
-            raise NotImplementedError(
-                "OpenAI generation is not yet implemented. "
-                "TODO: POST {base_url}/chat/completions — OpenAI-compatible."
+            return await self._call_openai_compat(
+                self.config.openai_base_url, model, prompt, system, json_mode
             )
         elif provider_type == ProviderType.CLAUDE:
-            raise NotImplementedError(
-                "Claude generation is not yet implemented. "
-                "TODO: POST {base_url}/messages — Anthropic Messages API."
-            )
+            return await self._call_claude(model, prompt, system, json_mode)
         elif provider_type == ProviderType.LMSTUDIO:
             return await self._call_openai_compat(
                 self.config.lmstudio_base_url, model, prompt, system, json_mode
@@ -698,13 +786,149 @@ class AIRouter:
         prompt: str,
         system: str | None = None,
     ) -> AsyncIterator[str]:
-        """Stream tokens from the selected provider.
+        """Stream tokens from the selected provider via SSE.
 
-        TODO: Implement real SSE streaming for each backend.
+        Supports:
+          - OpenAI-compatible backends (DeepSeek, OpenAI, LM Studio, llama.cpp)
+          - Ollama native streaming (JSON-lines)
+          - Anthropic Messages API streaming (SSE)
         """
-        # Stub: yield once, then stop
-        result = await self._call_provider(provider_type, model, prompt, system)
-        yield result["text"]
+        if provider_type == ProviderType.OLLAMA:
+            async for chunk in self._stream_ollama(model, prompt, system):
+                yield chunk
+        elif provider_type == ProviderType.CLAUDE:
+            async for chunk in self._stream_claude(model, prompt, system):
+                yield chunk
+        else:
+            # OpenAI-compatible (DeepSeek, OpenAI, LM Studio, llama.cpp)
+            base_url = _get_provider_base_url(self.config, provider_type)
+            headers: dict[str, str] = {"Content-Type": "application/json"}
+            if provider_type == ProviderType.DEEPSEEK and self.config.deepseek_api_key:
+                headers["Authorization"] = f"Bearer {self.config.deepseek_api_key}"
+            elif provider_type == ProviderType.OPENAI and self.config.openai_api_key:
+                headers["Authorization"] = f"Bearer {self.config.openai_api_key}"
+            async for chunk in self._stream_openai_compat(
+                base_url, model, prompt, system, headers
+            ):
+                yield chunk
+
+    async def _stream_openai_compat(
+        self,
+        base_url: str,
+        model: str,
+        prompt: str,
+        system: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream tokens from an OpenAI-compatible SSE endpoint.
+
+        Handles DeepSeek, OpenAI, LM Studio, and llama.cpp backends.
+        """
+        url = f"{base_url}/chat/completions"
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+            "max_tokens": 4096,
+            "temperature": 0.7,
+        }
+        headers = {"Content-Type": "application/json"}
+        if extra_headers:
+            headers.update(extra_headers)
+
+        async with self._http.stream("POST", url, json=payload, headers=headers) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    if data_str:
+                        try:
+                            chunk = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield content
+
+    async def _stream_ollama(
+        self,
+        model: str,
+        prompt: str,
+        system: str | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream tokens from Ollama native streaming endpoint."""
+        url = f"{self.config.ollama_base_url}/api/chat"
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+            "options": {"num_predict": 4096, "temperature": 0.7},
+        }
+        async with self._http.stream("POST", url, json=payload) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if data.get("done"):
+                    break
+                content = data.get("message", {}).get("content", "")
+                if content:
+                    yield content
+
+    async def _stream_claude(
+        self,
+        model: str,
+        prompt: str,
+        system: str | None = None,
+    ) -> AsyncIterator[str]:
+        """Stream tokens from Anthropic Messages API SSE."""
+        url = f"{self.config.claude_base_url}/messages"
+        payload: dict[str, Any] = {
+            "model": model,
+            "max_tokens": 4096,
+            "stream": True,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            payload["system"] = system
+        headers = {
+            "x-api-key": self.config.claude_api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        async with self._http.stream("POST", url, json=payload, headers=headers) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    data_str = line[6:].strip()
+                    if not data_str:
+                        continue
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    if data.get("type") == "content_block_delta":
+                        delta = data.get("delta", {})
+                        text = delta.get("text", "")
+                        if text:
+                            yield text
+                    elif data.get("type") == "message_stop":
+                        break
 
     # ── DeepSeek (OpenAI-compatible) ──────────────────────────────────────
 
@@ -811,7 +1035,7 @@ class AIRouter:
             "tokens_used": tokens_used,
         }
 
-    # ── OpenAI-compatible (LM Studio, llama.cpp) ──────────────────────────
+    # ── OpenAI-compatible (LM Studio, llama.cpp, OpenAI) ──────────────────
 
     async def _call_openai_compat(
         self,
@@ -854,6 +1078,53 @@ class AIRouter:
             "text": choice["message"]["content"],
             "finish_reason": choice.get("finish_reason", "stop"),
             "tokens_used": usage.get("total_tokens", 0),
+        }
+
+    # ── Claude (Anthropic Messages API) ──────────────────────────────────
+
+    async def _call_claude(
+        self,
+        model: str,
+        prompt: str,
+        system: str | None = None,
+        json_mode: bool = False,
+    ) -> dict[str, Any]:
+        """Call Anthropic Messages API.
+
+        POST {base_url}/messages
+        Format: {model, max_tokens, system, messages: [{role, content}]}
+        """
+        url = f"{self.config.claude_base_url}/messages"
+        payload: dict[str, Any] = {
+            "model": model,
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            payload["system"] = system
+
+        try:
+            resp = await self._http.post(  # type: ignore[union-attr]
+                url,
+                headers={
+                    "x-api-key": self.config.claude_api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                f"Claude API error {exc.response.status_code}: {exc.response.text}"
+            ) from exc
+        data = resp.json()
+
+        usage = data.get("usage", {}) or {}
+        return {
+            "text": data["content"][0]["text"],
+            "finish_reason": data.get("stop_reason", "stop"),
+            "tokens_used": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
         }
 
     # ── Hardware detection ────────────────────────────────────────────────

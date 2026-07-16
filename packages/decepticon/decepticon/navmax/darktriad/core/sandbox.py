@@ -1,10 +1,11 @@
-"""The Dark Triad — Docker Sandbox Manager.
+"""The Dark Triad — Docker Sandbox Manager with NavMAX bridge.
 
 Provides isolated Docker-based execution environments with:
 - Kali Linux containers with network isolation
 - Persistent tmux sessions for multi-command workflows
 - Personality-aware execution parameters
 - Automatic container lifecycle management
+- NavMAX ExploitSandbox bridge (Docker + fallback subprocess local)
 """
 
 from __future__ import annotations
@@ -14,8 +15,10 @@ import logging
 import os
 import re
 import shlex
+import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from decepticon.navmax.darktriad.core.personality import (
@@ -27,6 +30,54 @@ from decepticon.navmax.darktriad.core.personality import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ── Tentative d'import du bridge NavMAX ───────────────────────────────────────
+
+_NAVMAX_SANDBOX: Any | None = None
+_NAVMAX_AVAILABLE: bool = False
+
+
+def _try_import_navmax() -> bool:
+    """Tente d'importer le ExploitSandbox de NavMAX.
+
+    Ajoute le chemin NavMAX à sys.path de manière temporaire si nécessaire,
+    puis fait un import standard. Le résultat est mis en cache.
+
+    Returns:
+        True si NavMAX est disponible, False sinon.
+    """
+    global _NAVMAX_SANDBOX, _NAVMAX_AVAILABLE
+    if _NAVMAX_AVAILABLE:
+        return True
+    if _NAVMAX_SANDBOX is not None:
+        return False  # already tried and failed
+
+    navmax_path = str(Path.home() / "NavMAX")
+    if not os.path.isdir(navmax_path):
+        return False
+
+    try:
+        import importlib
+
+        # Ajouter NavMAX au sys.path si pas déjà présent
+        _added = False
+        if navmax_path not in sys.path:
+            sys.path.insert(0, navmax_path)
+            _added = True
+
+        try:
+            mod = importlib.import_module("decepticon.navmax.exploit.sandbox")
+            _NAVMAX_SANDBOX = mod.ExploitSandbox
+            _NAVMAX_AVAILABLE = True
+            logger.info("NavMAX sandbox bridge loaded from %s", navmax_path)
+            return True
+        except ImportError:
+            if _added:
+                sys.path.remove(navmax_path)
+            raise
+    except Exception as exc:
+        logger.debug("NavMAX sandbox import failed: %s", exc)
+    return False
 
 
 # ── Data Models ───────────────────────────────────────────────────────────────
@@ -44,6 +95,7 @@ class SandboxConfig:
     auto_cleanup: bool = True
     mount_workspace: bool = True  # mount TDT workspace directory
     privileged: bool = False
+    local_fallback: bool = True  # run commands locally if Docker unavailable
 
 
 @dataclass(slots=True)
@@ -67,30 +119,127 @@ class ExecutionResult:
     timed_out: bool
 
 
-# ── Network Manager ───────────────────────────────────────────────────────────
+# ── Network Manager (fonctionnel via docker CLI) ────────────────────────────────
 
 
 class NetworkManager:
-    """Manages Docker networks for sandbox isolation."""
+    """Manages Docker networks for sandbox isolation.
+
+    Utilise la CLI Docker via asyncio subprocess (ou docker-py si fourni).
+    """
 
     def __init__(self, docker_client: Any | None = None) -> None:
-        self._docker = docker_client  # TODO: inject real docker.DockerClient
+        self._docker = docker_client  # optional docker.DockerClient
 
-    def create_network(self, name: str) -> str:
+    async def _run_docker(
+        self, args: list[str], timeout: int = 30
+    ) -> tuple[int, str, str]:
+        """Execute une commande Docker CLI et retourne (exit_code, stdout, stderr)."""
+        if self._docker is not None:
+            # Utiliser docker-py si disponible
+            return await self._run_docker_py(args, timeout)
+
+        return await self._run_docker_cli(args, timeout)
+
+    async def _run_docker_py(
+        self, args: list[str], timeout: int = 30
+    ) -> tuple[int, str, str]:
+        """Bridge vers docker-py pour les opérations réseau."""
+        client = self._docker
+        command = args[0] if args else ""
+
+        try:
+            if command == "create":
+                name = args[args.index("--name") + 1] if "--name" in args else None
+                driver = args[args.index("--driver") + 1] if "--driver" in args else "bridge"
+                subnet = (
+                    args[args.index("--subnet") + 1] if "--subnet" in args else None
+                )
+                kwargs: dict[str, Any] = {"driver": driver}
+                if subnet:
+                    kwargs["ipam"] = client.ipam_pool(subnet=subnet)
+                net = client.networks.create(name or f"net-{int(time.time())}", **kwargs)
+                return (0, net.id, "")
+            elif command == "connect":
+                net_name = args[1] if len(args) > 1 else ""
+                cid = args[2] if len(args) > 2 else ""
+                net = client.networks.get(net_name)
+                net.connect(cid)
+                return (0, "", "")
+            elif command == "rm":
+                net_name = args[1] if len(args) > 1 else ""
+                net = client.networks.get(net_name)
+                net.remove()
+                return (0, "", "")
+            else:
+                return (1, "", f"Unknown docker-py network command: {command}")
+        except Exception as exc:
+            return (1, "", str(exc))
+
+    async def _run_docker_cli(
+        self, args: list[str], timeout: int = 30
+    ) -> tuple[int, str, str]:
+        """Execute une commande Docker CLI via subprocess asynchrone."""
+        cmd = ["docker"] + args
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout
+                )
+                return (
+                    proc.returncode or 0,
+                    stdout_bytes.decode("utf-8", errors="replace").strip(),
+                    stderr_bytes.decode("utf-8", errors="replace").strip(),
+                )
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return (-1, "", f"Command timed out after {timeout}s")
+        except FileNotFoundError:
+            return (-1, "", "docker: command not found")
+        except Exception as exc:
+            return (-1, "", str(exc))
+
+    async def create_network(self, name: str) -> str:
         """Create an isolated Docker network. Returns network ID."""
-        # TODO: implement via docker_client.networks.create()
-        logger.info("TODO: create Docker network '%s'", name)
-        return f"network-{name}"
+        exit_code, stdout, stderr = await self._run_docker(
+            ["network", "create", "--driver", "bridge", "--attachable", name]
+        )
+        if exit_code != 0:
+            # Peut-être déjà existant
+            logger.warning("create_network '%s' warning: %s", name, stderr)
+            # Vérifier si le réseau existe déjà
+            ec2, out2, _ = await self._run_docker(
+                ["network", "inspect", name, "--format", "{{.Id}}"]
+            )
+            if ec2 == 0 and out2.strip():
+                return out2.strip()
+            return f"network-{name}"
+        return stdout.strip()
 
-    def connect_container(self, container_id: str, network: str) -> None:
+    async def connect_container(self, container_id: str, network: str) -> None:
         """Connect a running container to an existing network."""
-        # TODO: implement via docker_client.networks.get(network).connect(container_id)
-        logger.info("TODO: connect container %s to network %s", container_id, network)
+        exit_code, _, stderr = await self._run_docker(
+            ["network", "connect", network, container_id]
+        )
+        if exit_code != 0:
+            logger.warning(
+                "connect container %s to network %s failed: %s",
+                container_id,
+                network,
+                stderr,
+            )
 
-    def remove_network(self, name: str) -> None:
+    async def remove_network(self, name: str) -> None:
         """Remove a Docker network."""
-        # TODO: implement via docker_client.networks.get(name).remove()
-        logger.info("TODO: remove network '%s'", name)
+        exit_code, _, stderr = await self._run_docker(["network", "rm", name])
+        if exit_code != 0 and "not found" not in stderr.lower():
+            logger.warning("remove network '%s' warning: %s", name, stderr)
 
 
 # ── Tmux Session Manager ─────────────────────────────────────────────────────
@@ -189,18 +338,42 @@ class DockerNotInstalledError(SandboxError):
 
 
 class SandboxManager:
-    """Async Docker sandbox manager with tmux, network isolation, and personality integration.
+    """Async Docker sandbox manager with NavMAX bridge, tmux, network isolation,
+    and personality integration.
 
     Manages the full lifecycle of a Kali Linux container used for safe
     execution of offensive security tools with personality-aware parameters.
+
+    Features:
+    - Bridge vers NavMAX ExploitSandbox (Docker natif)
+    - Fallback subprocess local si Docker indisponible
+    - docker-py SDK optionnel
+    - TMUX pour workflows interactifs multi-commandes
+    - Isolation réseau via Docker networks
+    - Paramètres d'exécution adaptés à la personnalité
     """
 
-    def __init__(self, config: SandboxConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: SandboxConfig | None = None,
+        docker_client: Any | None = None,
+    ) -> None:
+        """Initialize the sandbox manager.
+
+        Args:
+            config: Sandbox configuration (optional).
+            docker_client: docker.DockerClient instance (optional).
+                          Si fourni, utilisé via docker-py.
+                          Sinon, tente le bridge NavMAX, puis la CLI Docker,
+                          puis le fallback subprocess local.
+        """
         self.config = config or SandboxConfig()
         self._container_id: str | None = None
         self._started_at: float | None = None
-        self._docker: Any = None  # TODO: assign real docker.DockerClient
-        self.network = NetworkManager()
+        self._docker: Any = docker_client  # optional docker.DockerClient
+        self._navmax_bridge: Any | None = None  # ExploitSandbox instance, lazy
+        self._local_mode: bool = False  # True = fallback to local subprocess
+        self.network = NetworkManager(docker_client=docker_client)
         self.tmux: TmuxSessionManager | None = None
 
     # ── Container Lifecycle ───────────────────────────────────────────────
@@ -208,14 +381,26 @@ class SandboxManager:
     async def start(self) -> SandboxStatus:
         """Start the sandbox container and verify it's ready.
 
+        Utilise le bridge NavMAX si disponible, sinon la CLI Docker,
+        sinon le fallback subprocess local.
+
         Raises:
-            DockerNotInstalledError: If Docker is not available.
+            DockerNotInstalledError: If Docker is not available and local_fallback
+                                    is disabled.
             SandboxError: If the container fails to start.
 
         Returns:
             SandboxStatus with the running container details.
         """
         docker_available = await self._check_docker()
+        if not docker_available and self.config.local_fallback:
+            logger.info("Docker unavailable, falling back to local subprocess mode")
+            self._local_mode = True
+            self._container_id = "local"
+            self._started_at = time.monotonic()
+            self.tmux = TmuxSessionManager(self._exec_internal)
+            return await self.status()
+
         if not docker_available:
             raise DockerNotInstalledError(
                 "Docker is not installed or not running on this host. "
@@ -260,6 +445,14 @@ class SandboxManager:
 
     async def stop(self) -> None:
         """Stop and remove the sandbox container."""
+        if self._local_mode:
+            logger.info("Local mode: no container to stop")
+            self._container_id = None
+            self._started_at = None
+            self.tmux = None
+            self._local_mode = False
+            return
+
         if not self._container_id:
             logger.debug("No container to stop")
             return
@@ -296,6 +489,17 @@ class SandboxManager:
                 container_id=None,
                 image=self.config.image,
                 uptime_seconds=0.0,
+            )
+
+        if self._local_mode:
+            uptime = 0.0
+            if self._started_at:
+                uptime = time.monotonic() - self._started_at
+            return SandboxStatus(
+                running=True,
+                container_id="local",
+                image=self.config.image,
+                uptime_seconds=uptime,
             )
 
         uptime = 0.0
@@ -668,12 +872,71 @@ class SandboxManager:
     # ── Internal Helpers ──────────────────────────────────────────────────
 
     async def _check_docker(self) -> bool:
-        """Check if Docker CLI is available."""
+        """Check if Docker CLI is available.
+
+        Si un client docker-py est fourni, l'utilise en priorité.
+        Sinon, tente le bridge NavMAX, puis la CLI Docker.
+        """
+        if self._docker is not None:
+            # docker-py fourni — vérifier qu'il répond
+            try:
+                self._docker.ping()
+                return True
+            except Exception:
+                logger.debug("docker-py client ping failed, falling back")
+
+        # Tenter le bridge NavMAX
+        navmax_sandbox = await self._get_navmax_bridge()
+        if navmax_sandbox is not None:
+            try:
+                version = await navmax_sandbox.check_docker_version()
+                if version.get("available") == "true":
+                    return True
+            except Exception:
+                logger.debug("NavMAX bridge check failed, falling back")
+
+        # Fallback CLI Docker
         result = await self._exec_docker_cli("docker info --format='{{.ServerVersion}}' 2>&1")
         return result.exit_code == 0 and bool(result.stdout.strip())
 
+    async def _get_navmax_bridge(self) -> Any | None:
+        """Lazy-load the NavMAX ExploitSandbox bridge.
+
+        Returns:
+            ExploitSandbox instance or None if NavMAX is not available.
+        """
+        if self._navmax_bridge is not None:
+            # None = not loaded yet, False = failed to load, object = loaded
+            return self._navmax_bridge if self._navmax_bridge else None
+
+        if _try_import_navmax():
+            try:
+                navmax_config = _NAVMAX_SANDBOX.SandboxConfig(
+                    image=self.config.image,
+                    memory_limit=self.config.memory_limit,
+                    cpu_limit=self.config.cpu_limit,
+                    network_mode=self.config.network_mode,
+                    timeout=min(self.config.timeout, 3600),
+                )
+                self._navmax_bridge = _NAVMAX_SANDBOX(navmax_config)
+                logger.info("NavMAX sandbox bridge initialized")
+                return self._navmax_bridge
+            except Exception as exc:
+                logger.debug("NavMAX bridge init failed: %s", exc)
+
+        self._navmax_bridge = False  # sentinel: don't retry
+        logger.debug("NavMAX sandbox not available")
+        return None
+
     async def _image_exists(self, image: str) -> bool:
         """Check if a Docker image is already pulled locally."""
+        if self._docker is not None:
+            try:
+                self._docker.images.get(image)
+                return True
+            except Exception:
+                return False
+
         result = await self._exec_docker_cli(
             f"docker image inspect '{image}' --format='{{{{.Id}}}}' 2>&1"
         )
@@ -681,6 +944,13 @@ class SandboxManager:
 
     async def _pull_image(self, image: str) -> bool:
         """Pull a Docker image. Returns True on success."""
+        if self._docker is not None:
+            try:
+                self._docker.images.pull(image)
+                return True
+            except Exception:
+                return False
+
         result = await self._exec_docker_cli(
             f"docker pull '{image}' 2>&1",
             timeout=300,
@@ -688,8 +958,30 @@ class SandboxManager:
         return result.exit_code == 0
 
     async def _create_container(self) -> str | None:
-        """Create the sandbox container. Returns container ID or None."""
-        # Build docker run args from config
+        """Create the sandbox container. Returns container ID or None.
+
+        Utilise docker-py si disponible, sinon la CLI Docker.
+        """
+        if self._docker is not None:
+            try:
+                container = self._docker.containers.create(
+                    image=self.config.image,
+                    network=self.config.network_mode,
+                    mem_limit=self.config.memory_limit,
+                    nano_cpus=int(self.config.cpu_limit * 1e9),
+                    name=f"tdt-sandbox-{int(time.time())}",
+                    privileged=self.config.privileged,
+                    detach=True,
+                    stdin_open=True,
+                    tty=True,
+                    command=["sleep", str(self.config.timeout)],
+                )
+                return container.id
+            except Exception as exc:
+                logger.error("Failed to create container via docker-py: %s", exc)
+                return None
+
+        # Fallback CLI Docker
         args = [
             "docker",
             "create",
@@ -731,6 +1023,14 @@ class SandboxManager:
 
     async def _start_container(self, container_id: str) -> None:
         """Start a created container."""
+        if self._docker is not None:
+            try:
+                container = self._docker.containers.get(container_id)
+                container.start()
+                return
+            except Exception as exc:
+                raise SandboxError(f"Failed to start container via docker-py: {exc}")
+
         result = await self._exec_docker_cli(f"docker start {container_id} 2>&1")
         if result.exit_code != 0:
             raise SandboxError(f"Failed to start container: {result.stderr}")
@@ -749,12 +1049,45 @@ class SandboxManager:
         return False
 
     async def _exec_internal(self, command: str, timeout: int = 60) -> ExecutionResult:
-        """Execute a command inside the container using docker exec.
+        """Execute a command in the sandbox.
 
-        Uses subprocess to run 'docker exec' — no shell=True (command
-        is passed as a string but docker exec -d runs it in a real shell
-        inside the container).
+        Sélectionne automatiquement le backend disponible :
+        1. NavMAX bridge (si disponible)
+        2. docker exec via CLI (mode conteneur)
+        3. Subprocess local (mode fallback)
+
+        Args:
+            command: Shell command to execute.
+            timeout: Max execution time in seconds.
+
+        Returns:
+            ExecutionResult with stdout, stderr, exit code, and timing.
         """
+        if self._local_mode:
+            return await self._exec_local(command, timeout)
+
+        # Tenter le bridge NavMAX d'abord
+        navmax = await self._get_navmax_bridge()
+        if navmax is not None:
+            start = time.monotonic()
+            try:
+                result = await navmax.run(
+                    code=command,
+                    language="bash",
+                    timeout=min(timeout, self.config.timeout),
+                )
+                duration_ms = (time.monotonic() - start) * 1000
+                return ExecutionResult(
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                    exit_code=result.exit_code or 0,
+                    duration_ms=duration_ms,
+                    timed_out=result.error is not None and "Timeout" in result.error,
+                )
+            except Exception as exc:
+                logger.debug("NavMAX bridge exec failed, falling back: %s", exc)
+
+        # docker exec via CLI
         assert self._container_id, "Container not running"
 
         start = time.monotonic()
@@ -788,11 +1121,72 @@ class SandboxManager:
             timed_out=duration_ms >= timeout * 1000,
         )
 
+    async def _exec_local(self, command: str, timeout: int = 60) -> ExecutionResult:
+        """Execute a command locally (fallback when Docker is unavailable).
+
+        Args:
+            command: Shell command to execute via the local shell.
+            timeout: Max execution time in seconds.
+
+        Returns:
+            ExecutionResult with stdout, stderr, exit code, and timing.
+        """
+        start = time.monotonic()
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "sh",
+                "-c",
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout
+                )
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                duration_ms = (time.monotonic() - start) * 1000
+                return ExecutionResult(
+                    stdout="",
+                    stderr=f"Command timed out after {timeout}s",
+                    exit_code=-1,
+                    duration_ms=duration_ms,
+                    timed_out=True,
+                )
+
+            duration_ms = (time.monotonic() - start) * 1000
+            return ExecutionResult(
+                stdout=stdout_bytes.decode("utf-8", errors="replace"),
+                stderr=stderr_bytes.decode("utf-8", errors="replace"),
+                exit_code=proc.returncode or 0,
+                duration_ms=duration_ms,
+                timed_out=False,
+            )
+        except FileNotFoundError:
+            duration_ms = (time.monotonic() - start) * 1000
+            return ExecutionResult(
+                stdout="",
+                stderr="sh: command not found",
+                exit_code=-1,
+                duration_ms=duration_ms,
+                timed_out=False,
+            )
+
     async def _exec_docker_cli(self, cmd: str, timeout: int = 60) -> ExecutionResult:
         """Execute a docker CLI command via subprocess.
 
-        This is a stub that wraps subprocess for non-Docker environments.
-        TODO: Replace with real async subprocess or docker-py library.
+        Cette méthode exécute de vraies commandes Docker en subprocess.
+        Supporte les timeouts, le kill, et la capture stdout/stderr.
+
+        Args:
+            cmd: Docker CLI command string (e.g. 'docker ps -a').
+            timeout: Max execution time in seconds.
+
+        Returns:
+            ExecutionResult with parsed output.
         """
         start = time.monotonic()
 

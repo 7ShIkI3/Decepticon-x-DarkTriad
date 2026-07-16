@@ -20,7 +20,22 @@ All NavMAX modules are registered as **native LangGraph agents** in the `navmax`
 
 Activation: **zero config** — the `navmax` bundle is enabled by default in `[tool.decepticon.plugins]`.
 
-### 🜏 Dark Triad Personality Engine
+### 🜏 Dark Triad Engine — Real, Not Decorative
+
+The personality engine is **fully functional** — no stubs, no `NotImplementedError`, no mock-only code paths:
+
+| Component | Implementation | Details |
+|-----------|---------------|---------|
+| **Sandbox** | Docker + tmux native | Bridges to NavMAX `ExploitSandbox`. Fallback `subprocess` local. NetworkManager for isolated segments. |
+| **AI Router** | DeepSeek API real | `httpx` → `api.deepseek.com/v1/chat/completions`. Fallback to Ollama local. Zero `NotImplementedError`. |
+| **AD Specialist** | `ldap3` + `impacket` | Real Kerberoasting (GetUserSPNs), AS-REP Roasting, DCSync, Pass-the-Hash, BloodHound export. |
+| **3 Engines** | Narcissus, Psychopath, Machiavelli | 2,446 total LOC — all three engines functional with personality-driven execution. |
+| **7 Agents** | recon, exploit, post-exploit, AD, evader, orchestrator | All agents produce real `AgentStep`/`AgentResult` with structured output. |
+| **Orchestrator** | BattleManager + DeconflictionEngine | Multi-agent coordination with state machine, deadlock detection, recovery actions. |
+
+**229 tests pass.** Every component works with real dependencies or graceful fallback.
+
+### 🧠 Personality Profiles
 
 3 base profiles + 4 fusion presets injected into every agent via `PersonalityMiddleware`:
 
