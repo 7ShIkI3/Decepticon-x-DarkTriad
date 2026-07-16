@@ -1,13 +1,27 @@
-[![English](https://img.shields.io/badge/Language-English-blue?style=for-the-badge)](README.md)
-[![한국어](https://img.shields.io/badge/Language-한국어-red?style=for-the-badge)](README_KO.md)
+# 🜏 Decepticon × Dark Triad
 
-<div align="center">
-  <img src="assets/logo_banner.png" alt="Decepticon Logo">
-</div>
+> **This is a boosted fork of [PurpleAILAB/Decepticon](https://github.com/PurpleAILAB/Decepticon) with 13 additional offensive modules from NavMAX and the Dark Triad personality engine — Narcissism, Psychopathy, and Machiavellianism.**
 
-<h1 align="center">Decepticon — Autonomous Red Team Agent</h1>
+---
 
-<p align="center"><i>"Another AI hacker? Let us guess — it runs nmap and writes a report."</i></p>
+## 🜏 What's Added (vs upstream Decepticon)
+
+| Module | Files | Real Tools |
+|--------|-------|------------|
+| **AD** | `navmax/ad/engine.py` | ldap3 + impacket: DomainEnum, Kerberoaster, ASREPRoaster, PasswordSprayer |
+| **Scanner** | `navmax/scanner/engine.py` | nmap XML parser + nuclei JSONL parser, 5 scan profiles, personality mapping |
+| **Firewall** | `navmax/firewall/engine.py` | FortiGate REST API + StormShield SNS API, RuleAnalyzer, 5 CVE checks |
+| **Exploit** | `navmax/exploit/engine.py` | 7 exploit modules (SSH, Redis, SMB, EternalBlue, Jenkins, SNMP, Docker) + PayloadGenerator |
+| **Personality** | `navmax/personality/` | 🪞 Narcissism · 🔪 Psychopathy · 🕸️ Machiavellianism |
+| **Dark Triad** | `navmax/darktriad/` | Full engine: AI Router, Sandbox, 7 agents, Orchestrator, Knowledge Graph, Benchmark |
+| **OSINT** | `navmax/osint/` | DNS, WHOIS, SSL, Shodan, Censys collectors |
+| **Proxy** | `navmax/proxy/` | MITM, Interceptor, Fuzzer, Crawler, Repeater |
+| **Cracking** | `navmax/cracking/` | Hashcat, John, Hydra wrappers |
+| **Cloud** | `navmax/cloud/` | AWS/Azure/GCP scanners |
+
+**160+ Python files. Zero raw subprocess wrappers. Structured dataclass output on all core modules.**
+
+---
 
 <div align="center">
 
