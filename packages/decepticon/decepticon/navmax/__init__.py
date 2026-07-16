@@ -23,7 +23,6 @@ from __future__ import annotations
 # Sous-modules — importation paresseuse (lazy) via strings pour éviter
 # les dépendances circulaires et les ralentissements au démarrage.
 # ---------------------------------------------------------------------------
-
 # AD
 from decepticon.navmax import ad as _ad  # noqa: F401
 
@@ -39,6 +38,9 @@ from decepticon.navmax import core as _core  # noqa: F401
 # Cracking
 from decepticon.navmax import cracking as _cracking  # noqa: F401
 
+# Dark Triad
+from decepticon.navmax import darktriad as _darktriad  # noqa: F401
+
 # DB
 from decepticon.navmax import db as _db  # noqa: F401
 
@@ -51,17 +53,14 @@ from decepticon.navmax import firewall as _firewall  # noqa: F401
 # OSINT
 from decepticon.navmax import osint as _osint  # noqa: F401
 
+# Personality (standalone)
+from decepticon.navmax import personality as _personality  # noqa: F401
+
 # Proxy
 from decepticon.navmax import proxy as _proxy  # noqa: F401
 
 # Scanner
 from decepticon.navmax import scanner as _scanner  # noqa: F401
-
-# Dark Triad
-from decepticon.navmax import darktriad as _darktriad  # noqa: F401
-
-# Personality (standalone)
-from decepticon.navmax import personality as _personality  # noqa: F401
 
 __all__ = [
     "ad",

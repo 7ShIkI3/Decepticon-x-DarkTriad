@@ -3,7 +3,11 @@
 Specialist personality agents: orchestration, recon, and exploitation.
 """
 
-from decepticon.navmax.darktriad.agents.ad_specialist import ADSpecialistAgent, DomainInfo, KerberoastTicket
+from decepticon.navmax.darktriad.agents.ad_specialist import (
+    ADSpecialistAgent,
+    DomainInfo,
+    KerberoastTicket,
+)
 from decepticon.navmax.darktriad.agents.base import AgentResult, AgentStep, BaseAgent
 from decepticon.navmax.darktriad.agents.evader import EvaderAgent, EvasionTechnique
 from decepticon.navmax.darktriad.agents.exploiter import ExploitAttempt, ExploiterAgent

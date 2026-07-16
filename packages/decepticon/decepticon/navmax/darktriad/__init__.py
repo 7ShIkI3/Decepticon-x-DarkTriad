@@ -17,13 +17,13 @@ Contains:
 
 # Re-export key symbols
 from decepticon.navmax.darktriad.core.personality import (  # noqa: F401
-    PersonalityMode,
-    AggressionLevel,
-    PersonalityProfile,
+    MACHIAVELLI,
     NARCISSUS,
     PSYCHOPATH,
-    MACHIAVELLI,
+    AggressionLevel,
     FusionEngine,
+    PersonalityMode,
+    PersonalityProfile,
 )
 
 __all__ = [
