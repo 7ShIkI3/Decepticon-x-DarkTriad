@@ -228,7 +228,7 @@ class ADEnumerator:
             "userAccountControl", "pwdLastSet", "lastLogon", "memberOf",
         ]
         entries = self.conn.search(
-            base, f"(&(objectClass=user)(!(objectClass=computer)))", attrs,
+            base, "(&(objectClass=user)(!(objectClass=computer)))", attrs,
         )
         users: list[ADUser] = []
         for e in entries:
@@ -322,12 +322,11 @@ class Kerberoaster:
                 logger.info("no users with SPNs found")
                 return []
 
-            from impacket.examples.ldap_shell import LdapShell
             # Actually request tickets via impacket
             for user in spn_users:
                 try:
                     from impacket.krb5 import constants
-                    from impacket.krb5.kerberosv5 import getKerberosTGT, getKerberosTGS
+                    from impacket.krb5.kerberosv5 import getKerberosTGT
                     from impacket.krb5.types import Principal
 
                     # Get TGT first
@@ -375,8 +374,6 @@ class ASREPRoaster:
         """Request AS-REP for a single user. Returns hash in hashcat format."""
         try:
             from impacket.krb5.kerberosv5 import KerberosError
-
-            from impacket.examples.ldap_shell import LdapShell
         except ImportError:
             logger.error("impacket not installed")
             return None
