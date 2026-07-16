@@ -105,19 +105,28 @@ The personality engine is **fully functional** — no stubs, no `NotImplementedE
 
 **Prerequisites**: [Docker](https://docs.docker.com/get-docker/) and Docker Compose v2.
 
-**macOS / Linux / WSL2**
+**Linux / macOS / WSL2** — one command:
 ```bash
-curl -fsSL https://decepticon.red/install | bash
-decepticon onboard
-decepticon
+curl -fsSL https://raw.githubusercontent.com/7ShIkI3/Decepticon-x-DarkTriad/main/install.sh | bash
 ```
 
-**Windows (PowerShell, native)**
-```powershell
-irm https://decepticon.red/install.ps1 | iex
-decepticon onboard
-decepticon
+This clones the repo, prompts for your API key, builds Docker images, and starts all services. The web dashboard opens at **http://localhost:3000**.
+
+**Manual install** (if you prefer control):
+```bash
+git clone https://github.com/7ShIkI3/Decepticon-x-DarkTriad.git ~/.decepticon-darktriad
+cd ~/.decepticon-darktriad
+cp .env.example .env
+# Edit .env → add your DEEPSEEK_API_KEY (or ANTHROPIC_API_KEY, OPENAI_API_KEY…)
+make smoke          # builds images + starts stack + health check
 ```
+
+**Environment variables** (optional, skip interactive prompts):
+```bash
+DEEPSEEK_API_KEY=sk-... curl -fsSL https://raw.githubusercontent.com/7ShIkI3/Decepticon-x-DarkTriad/main/install.sh | bash
+```
+
+> **Note**: This fork uses **local Docker builds** (not pre-built GHCR images). First install takes ~5-10 min for image builds. Subsequent starts are instant.
 
 → **[Quick start](docs/getting-started.md)** · **[Full setup walkthrough](docs/setup-guide.md)**
 

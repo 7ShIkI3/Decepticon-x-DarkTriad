@@ -15,59 +15,71 @@ That's it. Everything else runs inside containers.
 
 ## Install
 
+**One command** (recommended):
 ```bash
-curl -fsSL https://decepticon.red/install | bash
+curl -fsSL https://raw.githubusercontent.com/7ShIkI3/Decepticon-x-DarkTriad/main/install.sh | bash
 ```
 
-This installs the `decepticon` CLI to your system.
+**Manual install**:
+```bash
+git clone https://github.com/7ShIkI3/Decepticon-x-DarkTriad.git ~/.decepticon-darktriad
+cd ~/.decepticon-darktriad
+cp .env.example .env
+# Edit .env → add your API key (DEEPSEEK_API_KEY, ANTHROPIC_API_KEY, etc.)
+make smoke
+```
+
+The install script or `make smoke` will:
+1. Clone the repo to `~/.decepticon-darktriad`
+2. Create `.env` from `.env.example`
+3. Build all Docker images locally (~5-10 min first time)
+4. Start all services (PostgreSQL, LiteLLM, LangGraph, Neo4j, sandbox, web dashboard)
 
 ---
 
 ## Configure
 
+Edit `~/.decepticon-darktriad/.env` to set your LLM credentials:
+
 ```bash
-decepticon onboard
+DEEPSEEK_API_KEY=sk-your-key-here      # DeepSeek (default)
+# ANTHROPIC_API_KEY=sk-ant-...          # Anthropic
+# OPENAI_API_KEY=sk-...                 # OpenAI
+# OLLAMA_API_BASE=http://host.docker.internal:11434  # Local Ollama
+# OLLAMA_MODEL=qwen3-coder:30b
 ```
 
-The interactive setup wizard guides you through:
-
-1. **Authentication** — API key, subscription OAuth (Claude / ChatGPT / Gemini / Copilot / SuperGrok / Perplexity), or local Ollama
-2. **Provider** — choose one of the tier-mapped providers, configure OAuth, or point at a local Ollama
-3. **Credentials** — API key, OAuth token, or endpoint URL (depending on auth method)
-4. **Model Profile** — `eco` (balanced), `max` (performance), `test` (development)
-5. **LangSmith** — Optional tracing for LLM observability
-
-For detailed provider setup including OAuth configuration, see [Setup Guide](setup-guide.md).
-
-Configuration is saved to `~/.decepticon/.env`. Run `decepticon onboard --reset` to reconfigure.
+See [Setup Guide](docs/setup-guide.md) for all providers (OAuth, Azure, AWS Bedrock, etc.).
 
 ---
 
 ## Launch
 
-**Terminal CLI** (default):
+**Web Dashboard** → `http://localhost:3000`
+
+The dashboard is the primary interface. All agents (including NavMAX Dark Triad) are available from the engagement picker.
+
+**Make targets** (from the install directory):
 ```bash
-decepticon
+cd ~/.decepticon-darktriad
+make status          # Show running services
+make logs            # Follow LangGraph logs
+make logs SVC=litellm  # Follow a specific service
+make health          # Health checks (KG + Neo4j + Web)
 ```
-
-Starts all services (PostgreSQL, LiteLLM, LangGraph, Neo4j, sandbox, C2 server, web dashboard) and opens the interactive terminal UI.
-
-**Web Dashboard** (browser):
-
-The web dashboard starts as part of the default stack — it's reachable at `http://localhost:3000` once `decepticon` (or `make dev` for contributors) is running.
 
 ---
 
 ## First Real Engagement
 
-1. Launch Decepticon (`decepticon`) and open <http://localhost:3000>
+1. Open <http://localhost:3000>
 2. The **Soundwave** agent interviews you to define the engagement:
    - Target scope (IP range, URL, Git repo, file upload, or local path)
    - Threat actor profile
    - Rules of Engagement (authorized scope, timing, exclusions)
 3. Soundwave writes the eight-document engagement bundle (RoE, Threat Profile, CONOPS, Deconfliction, Contact, Data Handling, Abort, Cleanup)
 4. The orchestrator builds the OPPLAN from the bundle — you review and approve it
-5. The autonomous loop begins
+5. The autonomous loop begins — NavMAX Dark Triad agents auto-activate based on target type
 
 > **Important**: Only run Decepticon against systems you own or have explicit written authorization to test. See the disclaimer in the main README.
 
@@ -76,8 +88,10 @@ The web dashboard starts as part of the default stack — it's reachable at `htt
 ## Stopping Services
 
 ```bash
-decepticon stop     # Stop all services, keep data
-make clean          # Stop + remove all volumes (resets everything)
+cd ~/.decepticon-darktriad
+make clean          # Stop + remove all containers and volumes (resets everything)
+# Or just stop without wiping:
+docker compose --profile cli down
 ```
 
 ---
@@ -85,10 +99,11 @@ make clean          # Stop + remove all volumes (resets everything)
 ## Check Service Status
 
 ```bash
-decepticon status        # Show running services
-decepticon logs          # Follow LangGraph logs (default)
-decepticon logs litellm  # Follow a specific service's logs
-decepticon kg-health     # Diagnose the Neo4j knowledge graph
+cd ~/.decepticon-darktriad
+make status          # Show running services
+make logs            # Follow LangGraph logs (default)
+make logs SVC=litellm  # Follow LiteLLM logs
+make health          # KG + Neo4j + Web health checks
 ```
 
 ---
