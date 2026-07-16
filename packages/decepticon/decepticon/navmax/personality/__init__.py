@@ -6,13 +6,13 @@ Narcissism · Psychopathy · Machiavellianism
 """
 
 from decepticon.navmax.personality.personality import (
-    PersonalityMode,
-    AggressionLevel,
-    PersonalityProfile,
+    MACHIAVELLI,
     NARCISSUS,
     PSYCHOPATH,
-    MACHIAVELLI,
+    AggressionLevel,
     FusionEngine,
+    PersonalityMode,
+    PersonalityProfile,
 )
 
 __all__ = [

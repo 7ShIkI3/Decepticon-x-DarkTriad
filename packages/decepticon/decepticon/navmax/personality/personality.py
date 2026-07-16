@@ -9,6 +9,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
 
+
 class PersonalityMode(enum.Enum):
     """The three dark personality traits + fusion support."""
 
